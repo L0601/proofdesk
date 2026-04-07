@@ -34,8 +34,51 @@ impl ImportService {
         let source_type = detect_source_type(&source_path)?;
         match source_type {
             SourceType::Docx => self.import_docx(app, &source_path),
-            SourceType::Pdf => Err(AppError::new("unsupported_source", "当前仅完成 DOCX 导入链路")),
+            SourceType::Pdf => Err(AppError::new(
+                "pdf_frontend_required",
+                "PDF 需先由前端提取文本后再导入",
+            )),
         }
+    }
+
+    pub fn import_normalized_document(
+        &self,
+        app: &AppHandle,
+        file_path: &str,
+        source_type: SourceType,
+        normalized: NormalizedDocument,
+    ) -> AppResult<ProjectSummary> {
+        let source_path = PathBuf::from(file_path);
+        validate_source_path(&source_path)?;
+
+        let detected = detect_source_type(&source_path)?;
+        if detected.as_str() != source_type.as_str() {
+            return Err(AppError::new("source_type_mismatch", "文件类型与标准化文档类型不匹配"));
+        }
+
+        let project_id = Uuid::new_v4().to_string();
+        let now = now_rfc3339()?;
+        let project_name = file_stem(&source_path)?;
+        let project_dir = project_root(app, &project_id)?;
+        let original_path = copy_original_file(&source_path, &project_dir, source_type)?;
+        let normalized = NormalizedDocument {
+            doc_id: project_id.clone(),
+            source_type,
+            version: normalized.version,
+            blocks: normalized.blocks,
+        };
+        let normalized_path = write_normalized_doc(&project_dir, &normalized)?;
+        let summary = build_project_summary(
+            &project_id,
+            &project_name,
+            &source_path,
+            source_type,
+            normalized.blocks.len() as i64,
+            &now,
+        );
+
+        persist_project(&self.db, &summary, &original_path, &normalized_path, &normalized)?;
+        Ok(summary)
     }
 
     fn import_docx(&self, app: &AppHandle, source_path: &Path) -> AppResult<ProjectSummary> {
@@ -43,13 +86,14 @@ impl ImportService {
         let now = now_rfc3339()?;
         let project_name = file_stem(source_path)?;
         let project_dir = project_root(app, &project_id)?;
-        let original_path = copy_original_file(source_path, &project_dir)?;
+        let original_path = copy_original_file(source_path, &project_dir, SourceType::Docx)?;
         let normalized = parse_docx(&project_id, source_path)?;
         let normalized_path = write_normalized_doc(&project_dir, &normalized)?;
         let summary = build_project_summary(
             &project_id,
             &project_name,
             source_path,
+            SourceType::Docx,
             normalized.blocks.len() as i64,
             &now,
         );
@@ -95,8 +139,15 @@ fn project_root(app: &AppHandle, project_id: &str) -> AppResult<PathBuf> {
     Ok(root)
 }
 
-fn copy_original_file(source_path: &Path, project_dir: &Path) -> AppResult<PathBuf> {
-    let target = project_dir.join("original").join("source.docx");
+fn copy_original_file(
+    source_path: &Path,
+    project_dir: &Path,
+    source_type: SourceType,
+) -> AppResult<PathBuf> {
+    let target = project_dir.join("original").join(match source_type {
+        SourceType::Docx => "source.docx",
+        SourceType::Pdf => "source.pdf",
+    });
     fs::copy(source_path, &target)?;
     Ok(target)
 }
@@ -112,13 +163,14 @@ fn build_project_summary(
     project_id: &str,
     project_name: &str,
     source_path: &Path,
+    source_type: SourceType,
     total_blocks: i64,
     now: &str,
 ) -> ProjectSummary {
     ProjectSummary {
         id: project_id.to_string(),
         name: project_name.to_string(),
-        source_type: SourceType::Docx,
+        source_type,
         source_file_name: source_path.file_name().unwrap().to_string_lossy().to_string(),
         status: ProjectStatus::Ready,
         total_blocks,

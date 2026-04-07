@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ProjectDetail, ProjectSummary } from "@/types/models";
+import type {
+  NormalizedDocument,
+  ProjectDetail,
+  ProjectSummary,
+  SourceType,
+} from "@/types/models";
 
 export function listProjects() {
   return invoke<ProjectSummary[]>("list_projects");
@@ -11,4 +16,16 @@ export function importDocument(filePath: string) {
 
 export function getProjectDetail(projectId: string) {
   return invoke<ProjectDetail | null>("get_project_detail", { projectId });
+}
+
+export function importNormalizedDocument(
+  filePath: string,
+  sourceType: SourceType,
+  normalizedDocument: NormalizedDocument,
+) {
+  return invoke<ProjectSummary>("import_normalized_document", {
+    filePath,
+    sourceType,
+    normalizedDocument,
+  });
 }

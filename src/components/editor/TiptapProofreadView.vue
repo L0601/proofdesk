@@ -1,0 +1,119 @@
+<template>
+  <InfoCard
+    title="校对视图"
+    subtitle="正文来自标准化文档模型，后续会在这里叠加问题高亮与跳转。"
+  >
+    <div
+      v-if="loading"
+      class="empty-state"
+    >
+      <strong>正在加载正文...</strong>
+      <p>系统正在读取标准化文档 JSON。</p>
+    </div>
+    <div
+      v-else-if="errorMessage"
+      class="error-banner"
+    >
+      {{ errorMessage }}
+    </div>
+    <EditorContent
+      v-else-if="editor"
+      class="editor-surface"
+      :editor="editor"
+    />
+  </InfoCard>
+</template>
+
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Editor, EditorContent } from "@tiptap/vue-3";
+import StarterKit from "@tiptap/starter-kit";
+import Underline from "@tiptap/extension-underline";
+import UniqueID from "@tiptap/extension-unique-id";
+import { readTextFile } from "@tauri-apps/plugin-fs";
+import InfoCard from "@/components/common/InfoCard.vue";
+import type { NormalizedDocument } from "@/types/models";
+import { buildEditorDoc } from "@/utils/buildEditorDoc";
+import { isTauriApp } from "@/utils/runtime";
+
+const props = defineProps<{
+  normalizedDocPath: string;
+}>();
+
+const editor = ref<Editor | null>(null);
+const loading = ref(false);
+const errorMessage = ref("");
+
+onMounted(() => {
+  void loadDocument();
+});
+
+watch(
+  () => props.normalizedDocPath,
+  () => {
+    void loadDocument();
+  },
+);
+
+onBeforeUnmount(() => {
+  editor.value?.destroy();
+});
+
+async function loadDocument() {
+  if (!props.normalizedDocPath) {
+    return;
+  }
+
+  if (!isTauriApp()) {
+    errorMessage.value = "请通过 Tauri 桌面环境查看正文。";
+    return;
+  }
+
+  loading.value = true;
+  errorMessage.value = "";
+
+  try {
+    const raw = await readTextFile(props.normalizedDocPath);
+    const normalized = JSON.parse(raw) as NormalizedDocument;
+    mountEditor(normalized);
+  } catch (error) {
+    errorMessage.value = extractMessage(error);
+  } finally {
+    loading.value = false;
+  }
+}
+
+function mountEditor(document: NormalizedDocument) {
+  const content = buildEditorDoc(document);
+
+  if (!editor.value) {
+    editor.value = new Editor({
+      editable: false,
+      extensions: [
+        StarterKit,
+        Underline,
+        UniqueID.configure({
+          attributeName: "data-block-id",
+          types: ["paragraph", "heading"],
+        }),
+      ],
+      content,
+    });
+    return;
+  }
+
+  editor.value.commands.setContent(content);
+}
+
+function extractMessage(error: unknown) {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String(error.message);
+  }
+
+  return "正文加载失败。";
+}
+</script>

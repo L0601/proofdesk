@@ -4,7 +4,7 @@ use tauri::State;
 use crate::error::AppResult;
 use crate::services::import_service::ImportService;
 use crate::state::AppState;
-use crate::types::{ProjectDetail, ProjectSummary};
+use crate::types::{NormalizedDocument, ProjectDetail, ProjectSummary, SourceType};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,4 +43,20 @@ pub fn import_document(
     file_path: String,
 ) -> AppResult<ProjectSummary> {
     ImportService::new(state.db.clone()).import_document(&app, &file_path)
+}
+
+#[tauri::command]
+pub fn import_normalized_document(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    file_path: String,
+    source_type: SourceType,
+    normalized_document: NormalizedDocument,
+) -> AppResult<ProjectSummary> {
+    ImportService::new(state.db.clone()).import_normalized_document(
+        &app,
+        &file_path,
+        source_type,
+        normalized_document,
+    )
 }

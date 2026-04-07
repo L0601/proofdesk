@@ -54,9 +54,16 @@
       v-else
       class="detail-layout"
     >
-      <TiptapDemo v-if="activeView === 'proofread'" />
+      <TiptapProofreadView
+        v-if="activeView === 'proofread' && projectDetail"
+        :normalized-doc-path="projectDetail.normalizedDocPath"
+      />
       <DocxSourcePreview
         v-else-if="projectDetail?.sourceType === 'docx'"
+        :file-path="projectDetail.sourceFilePath"
+      />
+      <PdfSourcePreview
+        v-else-if="projectDetail?.sourceType === 'pdf'"
         :file-path="projectDetail.sourceFilePath"
       />
 
@@ -75,8 +82,8 @@
           <div class="placeholder-row">
             <span class="status-dot status-dot--warn"></span>
             <div>
-              <strong>当前已接入 Tiptap</strong>
-              <p>用于验证编辑器依赖、只读渲染与样式表现。</p>
+              <strong>当前已切到真实文档视图</strong>
+              <p>正文已读取标准化 JSON，原文对照会根据文件类型切换预览组件。</p>
             </div>
           </div>
         </div>
@@ -89,8 +96,9 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import InfoCard from "@/components/common/InfoCard.vue";
-import TiptapDemo from "@/components/editor/TiptapDemo.vue";
+import TiptapProofreadView from "@/components/editor/TiptapProofreadView.vue";
 import DocxSourcePreview from "@/components/preview/DocxSourcePreview.vue";
+import PdfSourcePreview from "@/components/preview/PdfSourcePreview.vue";
 import { getProjectDetail } from "@/api/projects";
 import type { ProjectDetail } from "@/types/models";
 import { isTauriApp } from "@/utils/runtime";

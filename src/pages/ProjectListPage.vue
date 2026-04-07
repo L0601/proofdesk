@@ -17,10 +17,10 @@
               :disabled="loading"
               @click="handleImport"
             >
-              {{ loading ? "导入中..." : "导入 DOCX" }}
+              {{ loading ? "导入中..." : "导入文档" }}
             </button>
             <span class="inline-note">
-              当前已接入真实导入链路，首版只支持 `.docx`
+              当前支持 `.docx` 与文本型 `.pdf`，扫描件会被拒绝
             </span>
           </div>
         </div>
@@ -80,7 +80,7 @@
           class="empty-state"
         >
           <strong>还没有项目</strong>
-          <p>从本地选择一个 DOCX 文件，系统会自动复制原文件、解析段落并落库。</p>
+          <p>从本地选择 DOCX 或文本型 PDF，系统会自动生成标准化文档并保存。</p>
         </div>
       </InfoCard>
 
@@ -103,8 +103,13 @@
 import { computed, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import InfoCard from "@/components/common/InfoCard.vue";
-import { importDocument, listProjects } from "@/api/projects";
+import {
+  importDocument,
+  importNormalizedDocument,
+  listProjects,
+} from "@/api/projects";
 import type { ProjectSummary } from "@/types/models";
+import { extractPdfNormalizedDocument } from "@/utils/pdfImport";
 import { isTauriApp } from "@/utils/runtime";
 
 const loading = ref(false);
@@ -135,7 +140,7 @@ async function handleImport() {
 
   const selected = await open({
     multiple: false,
-    filters: [{ name: "Document", extensions: ["docx"] }],
+    filters: [{ name: "Document", extensions: ["docx", "pdf"] }],
   });
 
   if (!selected || Array.isArray(selected)) {
@@ -146,7 +151,12 @@ async function handleImport() {
   errorMessage.value = "";
 
   try {
-    await importDocument(selected);
+    if (selected.toLowerCase().endsWith(".pdf")) {
+      const normalized = await extractPdfNormalizedDocument(selected);
+      await importNormalizedDocument(selected, "pdf", normalized);
+    } else {
+      await importDocument(selected);
+    }
     await refreshProjects();
   } catch (error) {
     errorMessage.value = extractMessage(error);

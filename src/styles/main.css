@@ -445,6 +445,28 @@ input {
   box-shadow: none !important;
 }
 
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.pdf-canvas-wrap {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: #fff;
+  overflow: auto;
+}
+
+.pdf-canvas-wrap canvas {
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
+}
+
 .editor-surface .tiptap:focus {
   outline: none;
 }

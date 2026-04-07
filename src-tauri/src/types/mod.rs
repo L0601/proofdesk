@@ -158,6 +158,15 @@ pub enum SourceType {
     Pdf,
 }
 
+impl SourceType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceType::Docx => "docx",
+            SourceType::Pdf => "pdf",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectStatus {

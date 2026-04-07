@@ -6,7 +6,9 @@ mod services;
 mod state;
 mod types;
 
-use commands::{get_project_detail, import_document, list_projects, ping};
+use commands::{
+    get_project_detail, import_document, import_normalized_document, list_projects, ping,
+};
 use db::Database;
 use state::AppState;
 use tauri::Manager;
@@ -25,7 +27,8 @@ pub fn run() {
             ping,
             list_projects,
             get_project_detail,
-            import_document
+            import_document,
+            import_normalized_document
         ])
         .run(tauri::generate_context!())
         .expect("failed to run proofdesk application");
