@@ -63,7 +63,10 @@
     >
       <TiptapProofreadView
         v-if="activeView === 'proofread' && projectDetail"
+        ref="proofreadViewRef"
         :normalized-doc-path="projectDetail.normalizedDocPath"
+        :issues="issues"
+        :selected-issue-id="selectedIssueId"
       />
       <DocxSourcePreview
         v-else-if="projectDetail?.sourceType === 'docx'"
@@ -107,10 +110,12 @@
           v-if="issues.length"
           class="issue-list"
         >
-          <article
+          <button
             v-for="issue in issues"
             :key="issue.id"
             class="issue-card"
+            :class="{ 'issue-card--active': selectedIssueId === issue.id }"
+            @click="handleSelectIssue(issue)"
           >
             <div class="project-card__header">
               <strong>{{ issue.quoteText }}</strong>
@@ -121,7 +126,7 @@
               <span>建议：{{ issue.suggestion }}</span>
               <span>{{ issue.severity }}</span>
             </div>
-          </article>
+          </button>
         </div>
         <div
           v-else
@@ -161,12 +166,19 @@ import type {
 } from "@/types/models";
 import { isTauriApp } from "@/utils/runtime";
 
+type ProofreadViewExpose = {
+  focusIssue: () => Promise<void>;
+  scrollToBlock: (blockId: string) => Promise<void>;
+};
+
 const route = useRoute();
+const proofreadViewRef = ref<ProofreadViewExpose | null>(null);
 const activeView = ref<"proofread" | "source">("proofread");
 const loading = ref(false);
 const proofreading = ref(false);
 const loadError = ref("");
 const panelMessage = ref("");
+const selectedIssueId = ref<string | null>(null);
 const projectDetail = ref<ProjectDetail | null>(null);
 const job = ref<ProofreadingJob | null>(null);
 const issues = ref<ProofreadingIssue[]>([]);
@@ -228,6 +240,9 @@ async function refreshProofreadingData() {
     ]);
     job.value = latestJob;
     issues.value = issueList;
+    if (!selectedIssueId.value && issueList.length) {
+      selectedIssueId.value = issueList[0].id;
+    }
   } catch (error) {
     loadError.value = extractMessage(error, "校对数据加载失败。");
   }
@@ -247,11 +262,22 @@ async function handleProofread() {
     job.value = await startProofreading(projectId.value, defaultOptions);
     await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
     panelMessage.value = "校对任务已完成，问题列表已刷新。";
+    activeView.value = "proofread";
+    if (issues.value.length) {
+      await handleSelectIssue(issues.value[0]);
+    }
   } catch (error) {
     loadError.value = extractMessage(error, "校对任务执行失败。");
   } finally {
     proofreading.value = false;
   }
+}
+
+async function handleSelectIssue(issue: ProofreadingIssue) {
+  selectedIssueId.value = issue.id;
+  activeView.value = "proofread";
+  await proofreadViewRef.value?.scrollToBlock(issue.blockId);
+  await proofreadViewRef.value?.focusIssue();
 }
 
 function extractMessage(error: unknown, fallback: string) {

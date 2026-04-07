@@ -306,10 +306,13 @@ input {
 }
 
 .issue-card {
+  width: 100%;
   padding: var(--space-4);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: var(--radius-md);
   background: linear-gradient(180deg, #ffffff, #fbfdff);
+  text-align: left;
+  cursor: pointer;
 }
 
 .issue-card__footer {
@@ -319,6 +322,11 @@ input {
   margin-top: var(--space-2);
   color: var(--text-subtle);
   font-size: 14px;
+}
+
+.issue-card--active {
+  border-color: rgba(154, 52, 18, 0.25);
+  background: linear-gradient(180deg, #fff7ed, #ffffff);
 }
 
 .feature-list li {
@@ -465,6 +473,26 @@ input {
   padding: var(--space-4);
   border-radius: var(--radius-md);
   background: linear-gradient(180deg, #fff 0%, #fcfcfb 100%);
+}
+
+.editor-surface .issue-mark {
+  padding: 0 2px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.24);
+  color: inherit;
+}
+
+.editor-surface .issue-mark--medium {
+  background: rgba(249, 115, 22, 0.16);
+}
+
+.editor-surface .issue-mark--high {
+  background: rgba(239, 68, 68, 0.18);
+}
+
+.editor-surface .issue-mark--active {
+  box-shadow: 0 0 0 2px rgba(154, 52, 18, 0.24);
+  background: rgba(154, 52, 18, 0.18);
 }
 
 .docx-preview {

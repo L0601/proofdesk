@@ -1,7 +1,7 @@
 <template>
   <InfoCard
     title="校对视图"
-    subtitle="正文来自标准化文档模型，后续会在这里叠加问题高亮与跳转。"
+    subtitle="正文来自标准化文档模型，问题会按 block 与 offset 高亮到正文里。"
   >
     <div
       v-if="loading"
@@ -25,24 +25,28 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Editor, EditorContent } from "@tiptap/vue-3";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import UniqueID from "@tiptap/extension-unique-id";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import InfoCard from "@/components/common/InfoCard.vue";
-import type { NormalizedDocument } from "@/types/models";
+import IssueMark from "@/components/editor/extensions/IssueMark";
+import type { NormalizedDocument, ProofreadingIssue } from "@/types/models";
 import { buildEditorDoc } from "@/utils/buildEditorDoc";
 import { isTauriApp } from "@/utils/runtime";
 
 const props = defineProps<{
   normalizedDocPath: string;
+  issues?: ProofreadingIssue[];
+  selectedIssueId?: string | null;
 }>();
 
 const editor = ref<Editor | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
+const currentDocument = ref<NormalizedDocument | null>(null);
 
 onMounted(() => {
   void loadDocument();
@@ -55,8 +59,28 @@ watch(
   },
 );
 
+watch(
+  () => props.issues,
+  () => {
+    rerender();
+  },
+  { deep: true },
+);
+
+watch(
+  () => props.selectedIssueId,
+  () => {
+    void focusIssue();
+  },
+);
+
 onBeforeUnmount(() => {
   editor.value?.destroy();
+});
+
+defineExpose({
+  scrollToBlock,
+  focusIssue,
 });
 
 async function loadDocument() {
@@ -74,8 +98,9 @@ async function loadDocument() {
 
   try {
     const raw = await readTextFile(props.normalizedDocPath);
-    const normalized = JSON.parse(raw) as NormalizedDocument;
-    mountEditor(normalized);
+    currentDocument.value = JSON.parse(raw) as NormalizedDocument;
+    rerender();
+    await focusIssue();
   } catch (error) {
     errorMessage.value = extractMessage(error);
   } finally {
@@ -83,8 +108,12 @@ async function loadDocument() {
   }
 }
 
-function mountEditor(document: NormalizedDocument) {
-  const content = buildEditorDoc(document);
+function rerender() {
+  if (!currentDocument.value) {
+    return;
+  }
+
+  const content = buildEditorDoc(currentDocument.value, props.issues ?? []);
 
   if (!editor.value) {
     editor.value = new Editor({
@@ -92,6 +121,7 @@ function mountEditor(document: NormalizedDocument) {
       extensions: [
         StarterKit,
         Underline,
+        IssueMark,
         UniqueID.configure({
           attributeName: "data-block-id",
           types: ["paragraph", "heading"],
@@ -103,6 +133,40 @@ function mountEditor(document: NormalizedDocument) {
   }
 
   editor.value.commands.setContent(content);
+}
+
+async function focusIssue() {
+  if (!props.selectedIssueId || !editor.value) {
+    return;
+  }
+
+  await nextTick();
+  const root = editor.value.view.dom as HTMLElement;
+  root.querySelectorAll(".issue-mark--active").forEach((element) => {
+    element.classList.remove("issue-mark--active");
+  });
+
+  const target = root.querySelector<HTMLElement>(
+    `[data-issue-id="${props.selectedIssueId}"]`,
+  );
+  if (!target) {
+    return;
+  }
+
+  target.classList.add("issue-mark--active");
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function scrollToBlock(blockId: string) {
+  if (!editor.value) {
+    return;
+  }
+
+  await nextTick();
+  const target = (editor.value.view.dom as HTMLElement).querySelector<HTMLElement>(
+    `[data-block-id="${blockId}"]`,
+  );
+  target?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function extractMessage(error: unknown) {
