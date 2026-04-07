@@ -3,8 +3,8 @@ use rusqlite::{params, OptionalExtension};
 use crate::db::Database;
 use crate::error::AppResult;
 use crate::types::{
-    DocumentBlock, IssueSeverity, IssueStatus, IssueType, ProofreadingIssue, ProofreadingJob,
-    ProofreadingMode, ProofreadingStatus,
+    DocumentBlock, IssueSeverity, IssueStatus, IssueType, ProofreadingCall, ProofreadingIssue,
+    ProofreadingJob, ProofreadingMode, ProofreadingStatus,
 };
 
 #[derive(Debug, Clone)]
@@ -289,6 +289,42 @@ impl ProofreadingRepository {
         )
         .optional()
         .map_err(Into::into)
+    }
+
+    pub fn list_calls(&self, project_id: &str) -> AppResult<Vec<ProofreadingCall>> {
+        let conn = self.db.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, job_id, project_id, block_id, model_name, base_url, request_json,
+                   response_json, status, started_at, finished_at, latency_ms, prompt_tokens,
+                   completion_tokens, error_message
+            FROM proofreading_calls
+            WHERE project_id = ?1
+            ORDER BY started_at DESC
+            "#,
+        )?;
+
+        let rows = stmt.query_map([project_id], |row| {
+            Ok(ProofreadingCall {
+                id: row.get(0)?,
+                job_id: row.get(1)?,
+                project_id: row.get(2)?,
+                block_id: row.get(3)?,
+                model_name: row.get(4)?,
+                base_url: row.get(5)?,
+                request_json: row.get(6)?,
+                response_json: row.get(7)?,
+                status: row.get(8)?,
+                started_at: row.get(9)?,
+                finished_at: row.get(10)?,
+                latency_ms: row.get(11)?,
+                prompt_tokens: row.get(12)?,
+                completion_tokens: row.get(13)?,
+                error_message: row.get(14)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 }
 

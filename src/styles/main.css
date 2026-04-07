@@ -299,7 +299,9 @@ input {
 }
 
 .stats-grid,
-.issue-list {
+.issue-list,
+.call-list,
+.side-panel {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -327,6 +329,24 @@ input {
 .issue-card--active {
   border-color: rgba(154, 52, 18, 0.25);
   background: linear-gradient(180deg, #fff7ed, #ffffff);
+}
+
+.call-card {
+  padding: var(--space-4);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+}
+
+.call-card__error {
+  margin: var(--space-2) 0 0;
+  color: #b42318;
+  font-size: 14px;
+}
+
+.project-pill--error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b42318;
 }
 
 .feature-list li {

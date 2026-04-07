@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ProofreadOptions,
+  ProofreadingCall,
   ProofreadingIssue,
   ProofreadingJob,
 } from "@/types/models";
@@ -23,6 +24,12 @@ export function getLatestProofreadingJob(projectId: string) {
 
 export function listProofreadingIssues(projectId: string) {
   return invoke<ProofreadingIssue[]>("list_proofreading_issues", {
+    projectId,
+  });
+}
+
+export function listProofreadingCalls(projectId: string) {
+  return invoke<ProofreadingCall[]>("list_proofreading_calls", {
     projectId,
   });
 }

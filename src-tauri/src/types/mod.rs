@@ -110,6 +110,26 @@ pub struct ProofreadingJob {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProofreadingCall {
+    pub id: String,
+    pub job_id: String,
+    pub project_id: String,
+    pub block_id: String,
+    pub model_name: String,
+    pub base_url: String,
+    pub request_json: String,
+    pub response_json: Option<String>,
+    pub status: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub latency_ms: Option<i64>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProofreadingIssue {
     pub id: String,
     pub project_id: String,

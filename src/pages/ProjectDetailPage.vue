@@ -77,70 +77,119 @@
         :file-path="projectDetail.sourceFilePath"
       />
 
-      <InfoCard
-        title="右侧问题面板"
-        subtitle="当前已经接入校对任务、问题列表与基础统计。"
-      >
-        <div
-          v-if="job"
-          class="stats-grid"
+      <div class="side-panel">
+        <InfoCard
+          title="问题面板"
+          subtitle="当前已经接入校对任务、问题列表与基础统计。"
         >
-          <article class="metric-tile">
-            <span>任务状态</span>
-            <strong>{{ job.status }}</strong>
-          </article>
-          <article class="metric-tile">
-            <span>已完成</span>
-            <strong>{{ job.completedBlocks }}/{{ job.totalBlocks }}</strong>
-          </article>
-          <article class="metric-tile">
-            <span>问题数</span>
-            <strong>{{ job.totalIssues }}</strong>
-          </article>
-        </div>
-
-        <div
-          v-if="panelMessage"
-          class="success-banner"
-        >
-          {{ panelMessage }}
-        </div>
-
-        <div
-          v-if="issues.length"
-          class="issue-list"
-        >
-          <button
-            v-for="issue in issues"
-            :key="issue.id"
-            class="issue-card"
-            :class="{ 'issue-card--active': selectedIssueId === issue.id }"
-            @click="handleSelectIssue(issue)"
+          <div
+            v-if="job"
+            class="stats-grid"
           >
-            <div class="project-card__header">
-              <strong>{{ issue.quoteText }}</strong>
-              <span class="project-pill">{{ issue.issueType }}</span>
-            </div>
-            <p class="project-card__meta">{{ issue.explanation }}</p>
-            <div class="issue-card__footer">
-              <span>建议：{{ issue.suggestion }}</span>
-              <span>{{ issue.severity }}</span>
-            </div>
-          </button>
-        </div>
-        <div
-          v-else
-          class="placeholder-stack"
-        >
-          <div class="placeholder-row">
-            <span class="status-dot"></span>
-            <div>
-              <strong>暂无问题数据</strong>
-              <p>点击“开始校对”后，系统会按 block 调模型并把问题落到本地数据库。</p>
+            <article class="metric-tile">
+              <span>任务状态</span>
+              <strong>{{ job.status }}</strong>
+            </article>
+            <article class="metric-tile">
+              <span>已完成</span>
+              <strong>{{ job.completedBlocks }}/{{ job.totalBlocks }}</strong>
+            </article>
+            <article class="metric-tile">
+              <span>问题数</span>
+              <strong>{{ job.totalIssues }}</strong>
+            </article>
+          </div>
+
+          <div
+            v-if="panelMessage"
+            class="success-banner"
+          >
+            {{ panelMessage }}
+          </div>
+
+          <div
+            v-if="issues.length"
+            class="issue-list"
+          >
+            <button
+              v-for="issue in issues"
+              :key="issue.id"
+              class="issue-card"
+              :class="{ 'issue-card--active': selectedIssueId === issue.id }"
+              @click="handleSelectIssue(issue)"
+            >
+              <div class="project-card__header">
+                <strong>{{ issue.quoteText }}</strong>
+                <span class="project-pill">{{ issue.issueType }}</span>
+              </div>
+              <p class="project-card__meta">{{ issue.explanation }}</p>
+              <div class="issue-card__footer">
+                <span>建议：{{ issue.suggestion }}</span>
+                <span>{{ issue.severity }}</span>
+              </div>
+            </button>
+          </div>
+          <div
+            v-else
+            class="placeholder-stack"
+          >
+            <div class="placeholder-row">
+              <span class="status-dot"></span>
+              <div>
+                <strong>暂无问题数据</strong>
+                <p>点击“开始校对”后，系统会按 block 调模型并把问题落到本地数据库。</p>
+              </div>
             </div>
           </div>
-        </div>
-      </InfoCard>
+        </InfoCard>
+
+        <InfoCard
+          title="调用日志"
+          subtitle="展示每个 block 的模型调用状态、耗时与错误信息。"
+        >
+          <div
+            v-if="calls.length"
+            class="call-list"
+          >
+            <article
+              v-for="call in calls"
+              :key="call.id"
+              class="call-card"
+            >
+              <div class="project-card__header">
+                <strong>{{ call.blockId }}</strong>
+                <span
+                  class="project-pill"
+                  :class="{ 'project-pill--error': call.status === 'failed' }"
+                >
+                  {{ call.status }}
+                </span>
+              </div>
+              <p class="project-card__meta">
+                {{ call.modelName }} · {{ call.latencyMs ?? 0 }} ms
+              </p>
+              <p
+                v-if="call.errorMessage"
+                class="call-card__error"
+              >
+                {{ call.errorMessage }}
+              </p>
+            </article>
+          </div>
+          <div
+            v-else
+            class="placeholder-stack"
+          >
+            <div class="placeholder-row">
+              <span class="status-dot status-dot--warn"></span>
+              <div>
+                <strong>暂无调用日志</strong>
+                <p>执行校对后，这里会展示请求结果与失败原因。</p>
+              </div>
+            </div>
+          </div>
+        </InfoCard>
+      </div>
     </div>
   </section>
 </template>
@@ -155,12 +204,14 @@ import PdfSourcePreview from "@/components/preview/PdfSourcePreview.vue";
 import { getProjectDetail } from "@/api/projects";
 import {
   getLatestProofreadingJob,
+  listProofreadingCalls,
   listProofreadingIssues,
   startProofreading,
 } from "@/api/proofreading";
 import type {
   ProjectDetail,
   ProofreadOptions,
+  ProofreadingCall,
   ProofreadingIssue,
   ProofreadingJob,
 } from "@/types/models";
@@ -182,6 +233,7 @@ const selectedIssueId = ref<string | null>(null);
 const projectDetail = ref<ProjectDetail | null>(null);
 const job = ref<ProofreadingJob | null>(null);
 const issues = ref<ProofreadingIssue[]>([]);
+const calls = ref<ProofreadingCall[]>([]);
 
 const projectId = computed(() => String(route.params.id ?? ""));
 const projectTitle = computed(() => projectDetail.value?.name ?? projectId.value);
@@ -234,12 +286,14 @@ async function refreshProofreadingData() {
   }
 
   try {
-    const [latestJob, issueList] = await Promise.all([
+    const [latestJob, issueList, callList] = await Promise.all([
       getLatestProofreadingJob(projectId.value),
       listProofreadingIssues(projectId.value),
+      listProofreadingCalls(projectId.value),
     ]);
     job.value = latestJob;
     issues.value = issueList;
+    calls.value = callList;
     if (!selectedIssueId.value && issueList.length) {
       selectedIssueId.value = issueList[0].id;
     }
@@ -261,7 +315,7 @@ async function handleProofread() {
   try {
     job.value = await startProofreading(projectId.value, defaultOptions);
     await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
-    panelMessage.value = "校对任务已完成，问题列表已刷新。";
+    panelMessage.value = "校对任务已完成，问题列表与调用日志已刷新。";
     activeView.value = "proofread";
     if (issues.value.length) {
       await handleSelectIssue(issues.value[0]);

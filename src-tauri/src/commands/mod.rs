@@ -7,7 +7,7 @@ use crate::services::proofread_service::ProofreadService;
 use crate::state::AppState;
 use crate::types::{
     AppSettings, NormalizedDocument, ProjectDetail, ProjectSummary, ProofreadOptions,
-    ProofreadingIssue, ProofreadingJob, SourceType,
+    ProofreadingCall, ProofreadingIssue, ProofreadingJob, SourceType,
 };
 
 #[derive(Debug, Serialize)]
@@ -105,4 +105,12 @@ pub fn list_proofreading_issues(
     project_id: String,
 ) -> AppResult<Vec<ProofreadingIssue>> {
     state.proofreading_repository().list_issues(&project_id)
+}
+
+#[tauri::command]
+pub fn list_proofreading_calls(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<Vec<ProofreadingCall>> {
+    state.proofreading_repository().list_calls(&project_id)
 }

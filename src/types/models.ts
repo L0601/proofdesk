@@ -123,6 +123,24 @@ export interface ProofreadingJob {
   totalLatencyMs: number;
 }
 
+export interface ProofreadingCall {
+  id: string;
+  jobId: string;
+  projectId: string;
+  blockId: string;
+  modelName: string;
+  baseUrl: string;
+  requestJson: string;
+  responseJson: string | null;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  latencyMs: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  errorMessage: string | null;
+}
+
 export interface ProofreadingIssue {
   id: string;
   projectId: string;
