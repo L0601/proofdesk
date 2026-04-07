@@ -4,7 +4,9 @@ use tauri::State;
 use crate::error::AppResult;
 use crate::services::import_service::ImportService;
 use crate::state::AppState;
-use crate::types::{NormalizedDocument, ProjectDetail, ProjectSummary, SourceType};
+use crate::types::{
+    AppSettings, NormalizedDocument, ProjectDetail, ProjectSummary, SourceType,
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,4 +61,18 @@ pub fn import_normalized_document(
         source_type,
         normalized_document,
     )
+}
+
+#[tauri::command]
+pub fn get_app_settings(state: State<'_, AppState>) -> AppResult<AppSettings> {
+    state.app_settings_repository().get()
+}
+
+#[tauri::command]
+pub fn save_app_settings(
+    state: State<'_, AppState>,
+    settings: AppSettings,
+) -> AppResult<AppSettings> {
+    state.app_settings_repository().save(&settings)?;
+    Ok(settings)
 }

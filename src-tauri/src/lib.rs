@@ -7,7 +7,8 @@ mod state;
 mod types;
 
 use commands::{
-    get_project_detail, import_document, import_normalized_document, list_projects, ping,
+    get_app_settings, get_project_detail, import_document, import_normalized_document,
+    list_projects, ping, save_app_settings,
 };
 use db::Database;
 use state::AppState;
@@ -27,6 +28,8 @@ pub fn run() {
             ping,
             list_projects,
             get_project_detail,
+            get_app_settings,
+            save_app_settings,
             import_document,
             import_normalized_document
         ])

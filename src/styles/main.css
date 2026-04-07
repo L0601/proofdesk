@@ -417,7 +417,24 @@ input {
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 14px;
   background: #fff;
-  color: var(--text-muted);
+  color: var(--text-main);
+}
+
+.field__textarea {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--text-main);
+  resize: vertical;
+}
+
+.success-banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  color: #166534;
+  background: #ecfdf3;
 }
 
 .editor-surface .tiptap {
