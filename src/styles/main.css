@@ -236,6 +236,35 @@ input {
   color: var(--text-subtle);
 }
 
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.primary-button {
+  border: none;
+  border-radius: 999px;
+  padding: 12px 20px;
+  color: #fff;
+  font-weight: 600;
+  background: linear-gradient(135deg, #9a3412, #c2410c);
+  box-shadow: 0 16px 32px rgba(194, 65, 12, 0.2);
+  cursor: pointer;
+}
+
+.primary-button:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.inline-note {
+  color: var(--text-subtle);
+  font-size: 14px;
+}
+
 .metric-tile {
   padding: var(--space-4);
   border: 1px solid rgba(154, 52, 18, 0.14);
@@ -267,6 +296,73 @@ input {
 .feature-list li {
   color: var(--text-subtle);
   padding-left: 4px;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.project-card,
+.empty-state,
+.error-banner {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+}
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.project-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(154, 52, 18, 0.22);
+}
+
+.project-card__header,
+.project-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.project-card__meta,
+.project-card__footer {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 14px;
+}
+
+.project-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.empty-state {
+  background: #f8fafc;
+}
+
+.empty-state p,
+.error-banner {
+  margin: 8px 0 0;
+  color: var(--text-subtle);
+}
+
+.error-banner {
+  background: #fff1f2;
+  color: #b42318;
 }
 
 .placeholder-row {

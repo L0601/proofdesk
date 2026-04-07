@@ -2,6 +2,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::error::AppResult;
+use crate::services::import_service::ImportService;
 use crate::state::AppState;
 use crate::types::ProjectSummary;
 
@@ -25,4 +26,13 @@ pub fn ping() -> HealthCheck {
 #[tauri::command]
 pub fn list_projects(state: State<'_, AppState>) -> AppResult<Vec<ProjectSummary>> {
     state.project_repository().list()
+}
+
+#[tauri::command]
+pub fn import_document(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    file_path: String,
+) -> AppResult<ProjectSummary> {
+    ImportService::new(state.db.clone()).import_document(&app, &file_path)
 }

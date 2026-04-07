@@ -24,7 +24,7 @@ tauri-plugin-dialog = "2.2.0"
 tauri-plugin-fs = "2.2.0"
 tokio = { version = "1.44.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.12.15", default-features = false, features = ["json", "rustls-tls"] }
+time = { version = "0.3.44", features = ["formatting", "macros"] }
 uuid = { version = "1.16.0", features = ["v4", "serde"] }
 zip = "2.4.2"
 quick-xml = { version = "0.37.3", features = ["serialize"] }
-

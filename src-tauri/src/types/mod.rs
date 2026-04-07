@@ -55,6 +55,7 @@ pub struct SourceMap {
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedBlock {
     pub id: String,
+    #[serde(rename = "type")]
     pub block_type: BlockType,
     pub page: Option<i64>,
     pub runs: Vec<BlockRun>,
@@ -78,6 +79,7 @@ pub struct DocumentBlock {
     pub id: String,
     pub project_id: String,
     pub block_index: i64,
+    #[serde(rename = "type")]
     pub block_type: BlockType,
     pub text_content: String,
     pub json_payload: String,
@@ -219,7 +221,7 @@ pub enum IssueStatus {
     Resolved,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TextMark {
     Bold,

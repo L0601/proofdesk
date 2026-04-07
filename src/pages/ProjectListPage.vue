@@ -11,15 +11,27 @@
           <p class="hero-copy">
             当前阶段先搭建工程骨架、统一布局和基础数据结构，后续会接入导入、标准化、调度与高亮链路。
           </p>
+          <div class="hero-actions">
+            <button
+              class="primary-button"
+              :disabled="loading"
+              @click="handleImport"
+            >
+              {{ loading ? "导入中..." : "导入 DOCX" }}
+            </button>
+            <span class="inline-note">
+              当前已接入真实导入链路，首版只支持 `.docx`
+            </span>
+          </div>
         </div>
         <div class="metric-group">
           <article class="metric-tile">
             <span>项目数</span>
-            <strong>0</strong>
+            <strong>{{ projects.length }}</strong>
           </article>
           <article class="metric-tile">
             <span>进行中</span>
-            <strong>0</strong>
+            <strong>{{ processingCount }}</strong>
           </article>
           <article class="metric-tile">
             <span>问题数</span>
@@ -31,15 +43,45 @@
 
     <div class="two-column">
       <InfoCard
-        title="近期规划"
-        subtitle="先把可运行底座做稳，再挂导入与校对能力。"
+        title="项目列表"
+        subtitle="这里展示本地项目记录，点击后可进入详情页。"
       >
-        <ul class="feature-list">
-          <li>工程骨架与统一视觉系统</li>
-          <li>SQLite migration 与 repository 骨架</li>
-          <li>DOCX / PDF 导入链路</li>
-          <li>AI 校对任务调度与进度事件</li>
-        </ul>
+        <div
+          v-if="errorMessage"
+          class="error-banner"
+        >
+          {{ errorMessage }}
+        </div>
+
+        <div
+          v-if="projects.length"
+          class="project-list"
+        >
+          <RouterLink
+            v-for="project in projects"
+            :key="project.id"
+            class="project-card"
+            :to="`/project/${project.id}`"
+          >
+            <div class="project-card__header">
+              <strong>{{ project.name }}</strong>
+              <span class="project-pill">{{ project.sourceType }}</span>
+            </div>
+            <p class="project-card__meta">{{ project.sourceFileName }}</p>
+            <div class="project-card__footer">
+              <span>{{ project.totalBlocks }} 个段落</span>
+              <span>{{ project.status }}</span>
+            </div>
+          </RouterLink>
+        </div>
+
+        <div
+          v-else
+          class="empty-state"
+        >
+          <strong>还没有项目</strong>
+          <p>从本地选择一个 DOCX 文件，系统会自动复制原文件、解析段落并落库。</p>
+        </div>
       </InfoCard>
 
       <InfoCard
@@ -58,5 +100,70 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
+import { open } from "@tauri-apps/plugin-dialog";
 import InfoCard from "@/components/common/InfoCard.vue";
+import { importDocument, listProjects } from "@/api/projects";
+import type { ProjectSummary } from "@/types/models";
+import { isTauriApp } from "@/utils/runtime";
+
+const loading = ref(false);
+const errorMessage = ref("");
+const projects = ref<ProjectSummary[]>([]);
+
+const processingCount = computed(() =>
+  projects.value.filter((item) => item.status === "processing").length,
+);
+
+onMounted(() => {
+  void refreshProjects();
+});
+
+async function refreshProjects() {
+  if (!isTauriApp()) {
+    return;
+  }
+
+  projects.value = await listProjects();
+}
+
+async function handleImport() {
+  if (!isTauriApp()) {
+    errorMessage.value = "请通过 Tauri 桌面环境运行当前应用。";
+    return;
+  }
+
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Document", extensions: ["docx"] }],
+  });
+
+  if (!selected || Array.isArray(selected)) {
+    return;
+  }
+
+  loading.value = true;
+  errorMessage.value = "";
+
+  try {
+    await importDocument(selected);
+    await refreshProjects();
+  } catch (error) {
+    errorMessage.value = extractMessage(error);
+  } finally {
+    loading.value = false;
+  }
+}
+
+function extractMessage(error: unknown) {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String(error.message);
+  }
+
+  return "导入失败，请稍后重试。";
+}
 </script>

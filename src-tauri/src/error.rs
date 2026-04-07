@@ -64,3 +64,15 @@ impl From<tauri::Error> for AppError {
         Self::new("tauri_error", value.to_string())
     }
 }
+
+impl From<serde_json::Error> for AppError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::new("serde_json_error", value.to_string())
+    }
+}
+
+impl From<zip::result::ZipError> for AppError {
+    fn from(value: zip::result::ZipError) -> Self {
+        Self::new("zip_error", value.to_string())
+    }
+}
