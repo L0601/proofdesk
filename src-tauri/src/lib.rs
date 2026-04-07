@@ -6,7 +6,7 @@ mod services;
 mod state;
 mod types;
 
-use commands::{import_document, list_projects, ping};
+use commands::{get_project_detail, import_document, list_projects, ping};
 use db::Database;
 use state::AppState;
 use tauri::Manager;
@@ -21,7 +21,12 @@ pub fn run() {
             app.manage(AppState { db });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![ping, list_projects, import_document])
+        .invoke_handler(tauri::generate_handler![
+            ping,
+            list_projects,
+            get_project_detail,
+            import_document
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run proofdesk application");
 }

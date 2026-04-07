@@ -4,7 +4,7 @@ use tauri::State;
 use crate::error::AppResult;
 use crate::services::import_service::ImportService;
 use crate::state::AppState;
-use crate::types::ProjectSummary;
+use crate::types::{ProjectDetail, ProjectSummary};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +26,14 @@ pub fn ping() -> HealthCheck {
 #[tauri::command]
 pub fn list_projects(state: State<'_, AppState>) -> AppResult<Vec<ProjectSummary>> {
     state.project_repository().list()
+}
+
+#[tauri::command]
+pub fn get_project_detail(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<Option<ProjectDetail>> {
+    state.project_repository().get(&project_id)
 }
 
 #[tauri::command]

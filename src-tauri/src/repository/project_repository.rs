@@ -51,4 +51,66 @@ impl ProjectRepository {
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    pub fn get(&self, project_id: &str) -> AppResult<Option<crate::types::ProjectDetail>> {
+        let conn = self.db.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+              id,
+              name,
+              source_type,
+              source_file_name,
+              source_file_path,
+              normalized_doc_path,
+              status,
+              total_blocks,
+              completed_blocks,
+              failed_blocks,
+              created_at,
+              updated_at
+            FROM projects
+            WHERE id = ?1
+            "#,
+        )?;
+
+        let mut rows = stmt.query([project_id])?;
+        if let Some(row) = rows.next()? {
+            return Ok(Some(crate::types::ProjectDetail {
+                summary: ProjectSummary {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    source_type: parse_source_type(&row.get::<_, String>(2)?),
+                    source_file_name: row.get(3)?,
+                    status: parse_project_status(&row.get::<_, String>(6)?),
+                    total_blocks: row.get(7)?,
+                    completed_blocks: row.get(8)?,
+                    failed_blocks: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                },
+                source_file_path: row.get(4)?,
+                normalized_doc_path: row.get(5)?,
+            }));
+        }
+
+        Ok(None)
+    }
+}
+
+fn parse_source_type(value: &str) -> crate::types::SourceType {
+    match value {
+        "pdf" => crate::types::SourceType::Pdf,
+        _ => crate::types::SourceType::Docx,
+    }
+}
+
+fn parse_project_status(value: &str) -> crate::types::ProjectStatus {
+    match value {
+        "ready" => crate::types::ProjectStatus::Ready,
+        "processing" => crate::types::ProjectStatus::Processing,
+        "completed" => crate::types::ProjectStatus::Completed,
+        "failed" => crate::types::ProjectStatus::Failed,
+        _ => crate::types::ProjectStatus::Draft,
+    }
 }

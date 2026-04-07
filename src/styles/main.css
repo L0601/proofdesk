@@ -123,17 +123,22 @@ input {
 }
 
 .topbar__link,
-.ghost-link {
+.ghost-link,
+.ghost-button {
   padding: 10px 16px;
   border: 1px solid transparent;
   border-radius: 999px;
   color: var(--text-subtle);
+  background: transparent;
+  font: inherit;
   transition: all 160ms ease;
 }
 
 .topbar__link:hover,
 .topbar__link.router-link-active,
-.ghost-link:hover {
+.ghost-link:hover,
+.ghost-button:hover,
+.ghost-button--active {
   color: var(--accent);
   border-color: rgba(154, 52, 18, 0.12);
   background: var(--accent-soft);
@@ -420,6 +425,24 @@ input {
   padding: var(--space-4);
   border-radius: var(--radius-md);
   background: linear-gradient(180deg, #fff 0%, #fcfcfb 100%);
+}
+
+.docx-preview {
+  min-height: 320px;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: #fff;
+  overflow: auto;
+}
+
+.docx-preview .docx-wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.docx-preview .docx {
+  margin: 0 auto;
+  box-shadow: none !important;
 }
 
 .editor-surface .tiptap:focus {
