@@ -3,9 +3,11 @@ use tauri::State;
 
 use crate::error::AppResult;
 use crate::services::import_service::ImportService;
+use crate::services::proofread_service::ProofreadService;
 use crate::state::AppState;
 use crate::types::{
-    AppSettings, NormalizedDocument, ProjectDetail, ProjectSummary, SourceType,
+    AppSettings, NormalizedDocument, ProjectDetail, ProjectSummary, ProofreadOptions,
+    ProofreadingIssue, ProofreadingJob, SourceType,
 };
 
 #[derive(Debug, Serialize)]
@@ -75,4 +77,32 @@ pub fn save_app_settings(
 ) -> AppResult<AppSettings> {
     state.app_settings_repository().save(&settings)?;
     Ok(settings)
+}
+
+#[tauri::command]
+pub async fn start_proofreading(
+    state: State<'_, AppState>,
+    project_id: String,
+    options: ProofreadOptions,
+) -> AppResult<ProofreadingJob> {
+    let settings = state.app_settings_repository().get()?;
+    ProofreadService::new(state.db.clone())
+        .start_job(&project_id, options, settings)
+        .await
+}
+
+#[tauri::command]
+pub fn get_latest_proofreading_job(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<Option<ProofreadingJob>> {
+    state.proofreading_repository().get_latest_job(&project_id)
+}
+
+#[tauri::command]
+pub fn list_proofreading_issues(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<Vec<ProofreadingIssue>> {
+    state.proofreading_repository().list_issues(&project_id)
 }

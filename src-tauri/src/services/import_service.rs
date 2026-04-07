@@ -365,7 +365,7 @@ fn file_stem(path: &Path) -> AppResult<String> {
         .ok_or_else(|| AppError::new("invalid_file_name", "无法解析项目名称"))
 }
 
-fn now_rfc3339() -> AppResult<String> {
+pub fn now_rfc3339() -> AppResult<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .map_err(|error| AppError::new("time_format_error", error.to_string()))

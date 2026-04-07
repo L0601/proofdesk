@@ -8,7 +8,8 @@ mod types;
 
 use commands::{
     get_app_settings, get_project_detail, import_document, import_normalized_document,
-    list_projects, ping, save_app_settings,
+    get_latest_proofreading_job, list_proofreading_issues, list_projects, ping,
+    save_app_settings, start_proofreading,
 };
 use db::Database;
 use state::AppState;
@@ -29,7 +30,10 @@ pub fn run() {
             list_projects,
             get_project_detail,
             get_app_settings,
+            get_latest_proofreading_job,
+            list_proofreading_issues,
             save_app_settings,
+            start_proofreading,
             import_document,
             import_normalized_document
         ])

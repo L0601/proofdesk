@@ -96,6 +96,35 @@ impl ProjectRepository {
 
         Ok(None)
     }
+
+    pub fn update_progress(
+        &self,
+        project_id: &str,
+        status: crate::types::ProjectStatus,
+        completed_blocks: i64,
+        failed_blocks: i64,
+        updated_at: &str,
+    ) -> AppResult<()> {
+        let conn = self.db.connect()?;
+        conn.execute(
+            r#"
+            UPDATE projects
+            SET status = ?2,
+                completed_blocks = ?3,
+                failed_blocks = ?4,
+                updated_at = ?5
+            WHERE id = ?1
+            "#,
+            rusqlite::params![
+                project_id,
+                project_status_name(status),
+                completed_blocks,
+                failed_blocks,
+                updated_at
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 fn parse_source_type(value: &str) -> crate::types::SourceType {
@@ -112,5 +141,15 @@ fn parse_project_status(value: &str) -> crate::types::ProjectStatus {
         "completed" => crate::types::ProjectStatus::Completed,
         "failed" => crate::types::ProjectStatus::Failed,
         _ => crate::types::ProjectStatus::Draft,
+    }
+}
+
+fn project_status_name(value: crate::types::ProjectStatus) -> &'static str {
+    match value {
+        crate::types::ProjectStatus::Draft => "draft",
+        crate::types::ProjectStatus::Ready => "ready",
+        crate::types::ProjectStatus::Processing => "processing",
+        crate::types::ProjectStatus::Completed => "completed",
+        crate::types::ProjectStatus::Failed => "failed",
     }
 }

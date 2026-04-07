@@ -298,6 +298,29 @@ input {
   margin: 0;
 }
 
+.stats-grid,
+.issue-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.issue-card {
+  padding: var(--space-4);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+}
+
+.issue-card__footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--text-subtle);
+  font-size: 14px;
+}
+
 .feature-list li {
   color: var(--text-subtle);
   padding-left: 4px;

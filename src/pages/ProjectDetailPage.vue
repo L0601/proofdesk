@@ -11,6 +11,13 @@
         </div>
         <div class="hero-actions">
           <button
+            class="primary-button"
+            :disabled="proofreading"
+            @click="handleProofread"
+          >
+            {{ proofreading ? "校对中..." : "开始校对" }}
+          </button>
+          <button
             class="ghost-button"
             :class="{ 'ghost-button--active': activeView === 'proofread' }"
             @click="activeView = 'proofread'"
@@ -69,21 +76,62 @@
 
       <InfoCard
         title="右侧问题面板"
-        subtitle="后续将在这里展示 issue 列表、详情和跳转操作。"
+        subtitle="当前已经接入校对任务、问题列表与基础统计。"
       >
-        <div class="placeholder-stack">
+        <div
+          v-if="job"
+          class="stats-grid"
+        >
+          <article class="metric-tile">
+            <span>任务状态</span>
+            <strong>{{ job.status }}</strong>
+          </article>
+          <article class="metric-tile">
+            <span>已完成</span>
+            <strong>{{ job.completedBlocks }}/{{ job.totalBlocks }}</strong>
+          </article>
+          <article class="metric-tile">
+            <span>问题数</span>
+            <strong>{{ job.totalIssues }}</strong>
+          </article>
+        </div>
+
+        <div
+          v-if="panelMessage"
+          class="success-banner"
+        >
+          {{ panelMessage }}
+        </div>
+
+        <div
+          v-if="issues.length"
+          class="issue-list"
+        >
+          <article
+            v-for="issue in issues"
+            :key="issue.id"
+            class="issue-card"
+          >
+            <div class="project-card__header">
+              <strong>{{ issue.quoteText }}</strong>
+              <span class="project-pill">{{ issue.issueType }}</span>
+            </div>
+            <p class="project-card__meta">{{ issue.explanation }}</p>
+            <div class="issue-card__footer">
+              <span>建议：{{ issue.suggestion }}</span>
+              <span>{{ issue.severity }}</span>
+            </div>
+          </article>
+        </div>
+        <div
+          v-else
+          class="placeholder-stack"
+        >
           <div class="placeholder-row">
             <span class="status-dot"></span>
             <div>
               <strong>暂无问题数据</strong>
-              <p>完成数据层和 AI 调度后，这里会联动正文高亮。</p>
-            </div>
-          </div>
-          <div class="placeholder-row">
-            <span class="status-dot status-dot--warn"></span>
-            <div>
-              <strong>当前已切到真实文档视图</strong>
-              <p>正文已读取标准化 JSON，原文对照会根据文件类型切换预览组件。</p>
+              <p>点击“开始校对”后，系统会按 block 调模型并把问题落到本地数据库。</p>
             </div>
           </div>
         </div>
@@ -100,21 +148,53 @@ import TiptapProofreadView from "@/components/editor/TiptapProofreadView.vue";
 import DocxSourcePreview from "@/components/preview/DocxSourcePreview.vue";
 import PdfSourcePreview from "@/components/preview/PdfSourcePreview.vue";
 import { getProjectDetail } from "@/api/projects";
-import type { ProjectDetail } from "@/types/models";
+import {
+  getLatestProofreadingJob,
+  listProofreadingIssues,
+  startProofreading,
+} from "@/api/proofreading";
+import type {
+  ProjectDetail,
+  ProofreadOptions,
+  ProofreadingIssue,
+  ProofreadingJob,
+} from "@/types/models";
 import { isTauriApp } from "@/utils/runtime";
 
 const route = useRoute();
 const activeView = ref<"proofread" | "source">("proofread");
 const loading = ref(false);
+const proofreading = ref(false);
 const loadError = ref("");
+const panelMessage = ref("");
 const projectDetail = ref<ProjectDetail | null>(null);
+const job = ref<ProofreadingJob | null>(null);
+const issues = ref<ProofreadingIssue[]>([]);
 
 const projectId = computed(() => String(route.params.id ?? ""));
 const projectTitle = computed(() => projectDetail.value?.name ?? projectId.value);
 
+const defaultOptions: ProofreadOptions = {
+  mode: "full",
+  maxChunkChars: 1200,
+  overlapChars: 80,
+  issueTypes: [
+    "typo",
+    "punctuation",
+    "grammar",
+    "wording",
+    "redundancy",
+    "consistency",
+  ],
+};
+
 onMounted(() => {
-  void loadProjectDetail();
+  void loadPage();
 });
+
+async function loadPage() {
+  await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
+}
 
 async function loadProjectDetail() {
   if (!isTauriApp()) {
@@ -130,13 +210,51 @@ async function loadProjectDetail() {
       loadError.value = "未找到对应项目记录。";
     }
   } catch (error) {
-    loadError.value = extractMessage(error);
+    loadError.value = extractMessage(error, "项目详情加载失败。");
   } finally {
     loading.value = false;
   }
 }
 
-function extractMessage(error: unknown) {
+async function refreshProofreadingData() {
+  if (!isTauriApp()) {
+    return;
+  }
+
+  try {
+    const [latestJob, issueList] = await Promise.all([
+      getLatestProofreadingJob(projectId.value),
+      listProofreadingIssues(projectId.value),
+    ]);
+    job.value = latestJob;
+    issues.value = issueList;
+  } catch (error) {
+    loadError.value = extractMessage(error, "校对数据加载失败。");
+  }
+}
+
+async function handleProofread() {
+  if (!isTauriApp()) {
+    loadError.value = "请通过 Tauri 桌面环境执行校对。";
+    return;
+  }
+
+  proofreading.value = true;
+  loadError.value = "";
+  panelMessage.value = "";
+
+  try {
+    job.value = await startProofreading(projectId.value, defaultOptions);
+    await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
+    panelMessage.value = "校对任务已完成，问题列表已刷新。";
+  } catch (error) {
+    loadError.value = extractMessage(error, "校对任务执行失败。");
+  } finally {
+    proofreading.value = false;
+  }
+}
+
+function extractMessage(error: unknown, fallback: string) {
   if (typeof error === "string") {
     return error;
   }
@@ -145,6 +263,6 @@ function extractMessage(error: unknown) {
     return String(error.message);
   }
 
-  return "项目详情加载失败。";
+  return fallback;
 }
 </script>
