@@ -11,7 +11,7 @@ use crate::repository::project_repository::ProjectRepository;
 use crate::repository::proofreading_repository::{NewCallRecord, ProofreadingRepository};
 use crate::types::{
     AppSettings, IssueSeverity, IssueStatus, IssueType, ProjectStatus, ProofreadOptions,
-    ProofreadingIssue, ProofreadingJob, ProofreadingStatus,
+    ProofreadingIssue, ProofreadingJob, ProofreadingMode, ProofreadingStatus,
 };
 
 pub struct ProofreadService {
@@ -80,7 +80,7 @@ impl ProofreadService {
 
         let repo = ProofreadingRepository::new(self.db.clone());
         let project_repo = ProjectRepository::new(self.db.clone());
-        let blocks = repo.list_blocks(project_id)?;
+        let blocks = select_blocks(&repo.list_blocks(project_id)?, options.mode)?;
         if blocks.is_empty() {
             return Err(AppError::new("empty_document", "当前项目没有可校对的正文块"));
         }
@@ -205,8 +205,8 @@ impl ProofreadService {
             } else {
                 ProjectStatus::Completed
             },
-            job.completed_blocks,
-            job.failed_blocks,
+            repo.count_block_statuses(project_id)?.0,
+            repo.count_block_statuses(project_id)?.1,
             job.finished_at.as_deref().unwrap_or_default(),
         )?;
         Ok(job)
@@ -356,6 +356,26 @@ fn build_rules(issue_types: &[IssueType]) -> Vec<String> {
         format!("重点检查：{}", labels),
         "每项必须返回 type、severity、start_offset、end_offset、quote、suggestion、explanation".to_string(),
     ]
+}
+
+fn select_blocks(
+    blocks: &[crate::types::DocumentBlock],
+    mode: ProofreadingMode,
+) -> AppResult<Vec<crate::types::DocumentBlock>> {
+    let selected = match mode {
+        ProofreadingMode::RetryFailed => blocks
+            .iter()
+            .filter(|block| matches!(block.proofreading_status, ProofreadingStatus::Failed))
+            .cloned()
+            .collect::<Vec<_>>(),
+        _ => blocks.to_vec(),
+    };
+
+    if matches!(mode, ProofreadingMode::RetryFailed) && selected.is_empty() {
+        return Err(AppError::new("no_failed_blocks", "当前没有可重试的失败块"));
+    }
+
+    Ok(selected)
 }
 
 fn validate_settings(settings: &AppSettings) -> AppResult<()> {

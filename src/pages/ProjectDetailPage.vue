@@ -19,6 +19,13 @@
           </button>
           <button
             class="ghost-button"
+            :disabled="proofreading || !hasFailedBlocks"
+            @click="handleRetryFailed"
+          >
+            重试失败块
+          </button>
+          <button
+            class="ghost-button"
             :class="{ 'ghost-button--active': activeView === 'proofread' }"
             @click="activeView = 'proofread'"
           >
@@ -237,6 +244,7 @@ const calls = ref<ProofreadingCall[]>([]);
 
 const projectId = computed(() => String(route.params.id ?? ""));
 const projectTitle = computed(() => projectDetail.value?.name ?? projectId.value);
+const hasFailedBlocks = computed(() => (job.value?.failedBlocks ?? 0) > 0);
 
 const defaultOptions: ProofreadOptions = {
   mode: "full",
@@ -313,15 +321,34 @@ async function handleProofread() {
   panelMessage.value = "";
 
   try {
-    job.value = await startProofreading(projectId.value, defaultOptions);
-    await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
-    panelMessage.value = "校对任务已完成，问题列表与调用日志已刷新。";
-    activeView.value = "proofread";
-    if (issues.value.length) {
-      await handleSelectIssue(issues.value[0]);
-    }
+    await executeProofreading(defaultOptions, "校对任务已完成，问题列表与调用日志已刷新。");
   } catch (error) {
     loadError.value = extractMessage(error, "校对任务执行失败。");
+  } finally {
+    proofreading.value = false;
+  }
+}
+
+async function handleRetryFailed() {
+  if (!isTauriApp()) {
+    loadError.value = "请通过 Tauri 桌面环境执行重试。";
+    return;
+  }
+
+  proofreading.value = true;
+  loadError.value = "";
+  panelMessage.value = "";
+
+  try {
+    await executeProofreading(
+      {
+        ...defaultOptions,
+        mode: "retry_failed",
+      },
+      "失败块已重试，问题列表与调用日志已刷新。",
+    );
+  } catch (error) {
+    loadError.value = extractMessage(error, "失败块重试失败。");
   } finally {
     proofreading.value = false;
   }
@@ -332,6 +359,19 @@ async function handleSelectIssue(issue: ProofreadingIssue) {
   activeView.value = "proofread";
   await proofreadViewRef.value?.scrollToBlock(issue.blockId);
   await proofreadViewRef.value?.focusIssue();
+}
+
+async function executeProofreading(
+  options: ProofreadOptions,
+  successMessage: string,
+) {
+  job.value = await startProofreading(projectId.value, options);
+  await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
+  panelMessage.value = successMessage;
+  activeView.value = "proofread";
+  if (issues.value.length) {
+    await handleSelectIssue(issues.value[0]);
+  }
 }
 
 function extractMessage(error: unknown, fallback: string) {

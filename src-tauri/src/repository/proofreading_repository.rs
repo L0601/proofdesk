@@ -126,6 +126,21 @@ impl ProofreadingRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn count_block_statuses(&self, project_id: &str) -> AppResult<(i64, i64)> {
+        let conn = self.db.connect()?;
+        let completed = conn.query_row(
+            "SELECT COUNT(1) FROM document_blocks WHERE project_id = ?1 AND proofreading_status = 'completed'",
+            [project_id],
+            |row| row.get(0),
+        )?;
+        let failed = conn.query_row(
+            "SELECT COUNT(1) FROM document_blocks WHERE project_id = ?1 AND proofreading_status = 'failed'",
+            [project_id],
+            |row| row.get(0),
+        )?;
+        Ok((completed, failed))
+    }
+
     pub fn update_block_status(
         &self,
         block_id: &str,
