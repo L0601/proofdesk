@@ -1,7 +1,4 @@
 import { createRouter, createWebHistory } from "vue-router";
-import ProjectListPage from "@/pages/ProjectListPage.vue";
-import ProjectDetailPage from "@/pages/ProjectDetailPage.vue";
-import SettingsPage from "@/pages/SettingsPage.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -9,17 +6,17 @@ const router = createRouter({
     {
       path: "/",
       name: "project-list",
-      component: ProjectListPage,
+      component: () => import("@/pages/ProjectListPage.vue"),
     },
     {
       path: "/project/:id",
       name: "project-detail",
-      component: ProjectDetailPage,
+      component: () => import("@/pages/ProjectDetailPage.vue"),
     },
     {
       path: "/settings",
       name: "settings",
-      component: SettingsPage,
+      component: () => import("@/pages/SettingsPage.vue"),
     },
   ],
 });

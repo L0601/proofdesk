@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
@@ -23,10 +23,6 @@ impl Database {
         let db = Self { db_path };
         db.run_migrations()?;
         Ok(db)
-    }
-
-    pub fn db_path(&self) -> &Path {
-        &self.db_path
     }
 
     pub fn connect(&self) -> AppResult<Connection> {
