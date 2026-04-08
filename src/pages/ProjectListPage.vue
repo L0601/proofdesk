@@ -23,6 +23,13 @@
               当前支持 `.docx` 与文本型 `.pdf`，扫描件会被拒绝
             </span>
           </div>
+          <input
+            ref="webFileInput"
+            type="file"
+            accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            class="visually-hidden"
+            @change="handleWebFileChange"
+          />
         </div>
         <div class="metric-group">
           <article class="metric-tile">
@@ -52,6 +59,10 @@
         >
           {{ errorMessage }}
         </div>
+        <details v-if="debugLogs.length" class="debug-panel">
+          <summary>导入调试日志</summary>
+          <pre class="debug-panel__content">{{ debugLogsText }}</pre>
+        </details>
 
         <div
           v-if="projects.length"
@@ -102,6 +113,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
 import InfoCard from "@/components/common/InfoCard.vue";
 import {
   importDocument,
@@ -112,13 +124,20 @@ import type { ProjectSummary } from "@/types/models";
 import { extractPdfNormalizedDocument } from "@/utils/pdfImport";
 import { isTauriApp } from "@/utils/runtime";
 
+type SelectedFile =
+  | { kind: "path"; filePath: string }
+  | { kind: "file"; file: File };
+
 const loading = ref(false);
 const errorMessage = ref("");
 const projects = ref<ProjectSummary[]>([]);
+const debugLogs = ref<string[]>([]);
+const webFileInput = ref<HTMLInputElement | null>(null);
 
 const processingCount = computed(() =>
   projects.value.filter((item) => item.status === "processing").length,
 );
+const debugLogsText = computed(() => debugLogs.value.join("\n"));
 
 onMounted(() => {
   void refreshProjects();
@@ -133,47 +152,175 @@ async function refreshProjects() {
 }
 
 async function handleImport() {
+  resetImportFeedback();
+
   if (!isTauriApp()) {
-    errorMessage.value = "请通过 Tauri 桌面环境运行当前应用。";
+    logImport("当前为纯前端调试环境，使用浏览器文件选择器");
+    webFileInput.value?.click();
     return;
   }
 
-  const selected = await open({
-    multiple: false,
-    filters: [{ name: "Document", extensions: ["docx", "pdf"] }],
-  });
-
-  if (!selected || Array.isArray(selected)) {
-    return;
-  }
-
-  loading.value = true;
-  errorMessage.value = "";
+  let selected: SelectedFile | null = null;
 
   try {
-    if (selected.toLowerCase().endsWith(".pdf")) {
-      const normalized = await extractPdfNormalizedDocument(selected);
-      await importNormalizedDocument(selected, "pdf", normalized);
-    } else {
-      await importDocument(selected);
+    const result = await open({
+      multiple: false,
+      filters: [{ name: "Document", extensions: ["docx", "pdf"] }],
+    });
+
+    if (!result || Array.isArray(result)) {
+      logImport("用户取消了文件选择");
+      return;
     }
+
+    selected = { kind: "path", filePath: result };
+    logImport("Tauri 文件选择完成", { filePath: result });
+  } catch (error) {
+    handleImportError("无法打开文件选择器", error);
+    return;
+  }
+
+  await processSelectedFile(selected);
+}
+
+async function handleWebFileChange(event: Event) {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+
+  if (!file) {
+    logImport("浏览器文件选择器未返回文件");
+    return;
+  }
+
+  logImport("浏览器文件选择完成", {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+  });
+  await processSelectedFile({ kind: "file", file });
+  input.value = "";
+}
+
+async function processSelectedFile(selected: SelectedFile) {
+  loading.value = true;
+
+  try {
+    const fileName = getSelectedFileName(selected);
+    logImport("开始处理导入文件", {
+      fileName,
+      mode: selected.kind,
+    });
+
+    if (fileName.toLowerCase().endsWith(".pdf")) {
+      const normalized = await parsePdf(selected);
+      if (selected.kind === "path") {
+        await importNormalizedDocument(selected.filePath, "pdf", normalized);
+        logImport("PDF 项目已写入本地数据库", {
+          blockCount: normalized.blocks.length,
+        });
+      } else {
+        logImport("纯前端模式下完成 PDF 解析，未写入本地数据库", {
+          blockCount: normalized.blocks.length,
+        });
+        errorMessage.value =
+          "当前为前端调试模式：PDF 已完成解析，但不会保存到本地项目库。";
+      }
+    } else {
+      if (selected.kind !== "path") {
+        throw new Error(
+          "当前为前端调试模式，DOCX 导入依赖 Tauri 后端，暂不支持直接保存。",
+        );
+      }
+
+      await importDocument(selected.filePath);
+      logImport("DOCX 项目已写入本地数据库");
+    }
+
     await refreshProjects();
   } catch (error) {
-    errorMessage.value = extractMessage(error);
+    handleImportError("导入出错了", error);
   } finally {
     loading.value = false;
   }
 }
 
+async function parsePdf(selected: SelectedFile) {
+  if (selected.kind === "path") {
+    logImport("开始读取 Tauri 本地文件", {
+      filePath: selected.filePath,
+    });
+    const bytes = await readFile(selected.filePath);
+    logImport("Tauri 本地文件读取完成", {
+      byteLength: bytes.byteLength,
+    });
+    return extractPdfNormalizedDocument(bytes, logImport);
+  }
+
+  logImport("开始读取浏览器文件内容", {
+    name: selected.file.name,
+    size: selected.file.size,
+  });
+  const bytes = new Uint8Array(await selected.file.arrayBuffer());
+  logImport("浏览器文件读取完成", { byteLength: bytes.byteLength });
+  return extractPdfNormalizedDocument(bytes, logImport);
+}
+
+function getSelectedFileName(selected: SelectedFile) {
+  if (selected.kind === "file") {
+    return selected.file.name;
+  }
+
+  const segments = selected.filePath.split(/[\\/]/);
+  return segments[segments.length - 1] ?? selected.filePath;
+}
+
+function resetImportFeedback() {
+  errorMessage.value = "";
+  debugLogs.value = [];
+}
+
+function handleImportError(prefix: string, error: unknown) {
+  const detail = extractErrorDetail(error);
+  errorMessage.value = `${prefix}：${detail.message}`;
+  logImport(prefix, {
+    message: detail.message,
+    stack: detail.stack,
+    raw: error,
+  });
+  console.error(`[proofdesk] ${prefix}`, error);
+}
+
+function logImport(message: string, payload?: unknown) {
+  const line = payload
+    ? `[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] ${message} ${safeStringify(payload)}`
+    : `[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}] ${message}`;
+  debugLogs.value.push(line);
+  console.log(`[proofdesk] ${message}`, payload ?? "");
+}
+
+function safeStringify(payload: unknown) {
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return String(payload);
+  }
+}
+
 function extractMessage(error: unknown) {
+  return extractErrorDetail(error).message;
+}
+
+function extractErrorDetail(error: unknown) {
   if (typeof error === "string") {
-    return error;
+    return { message: error, stack: null as string | null };
   }
 
   if (error && typeof error === "object" && "message" in error) {
-    return String(error.message);
+    const stack =
+      "stack" in error && typeof error.stack === "string" ? error.stack : null;
+    return { message: String(error.message), stack };
   }
 
-  return "导入失败，请稍后重试。";
+  return { message: "导入失败，请稍后重试。", stack: null as string | null };
 }
 </script>

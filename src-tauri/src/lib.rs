@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod error;
+pub mod local_debug;
 mod repository;
 mod services;
 mod state;

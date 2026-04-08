@@ -16,16 +16,37 @@
     >
       {{ errorMessage }}
     </div>
-    <EditorContent
-      v-else-if="editor"
-      class="editor-surface"
-      :editor="editor"
-    />
+    <template v-else-if="editor">
+      <div
+        v-if="hasPagination"
+        class="pdf-toolbar"
+      >
+        <button
+          class="ghost-button"
+          :disabled="currentPage <= firstPage"
+          @click="goPrevPage"
+        >
+          上一页
+        </button>
+        <span class="inline-note">第 {{ currentPage }} / {{ lastPage }} 页</span>
+        <button
+          class="ghost-button"
+          :disabled="currentPage >= lastPage"
+          @click="goNextPage"
+        >
+          下一页
+        </button>
+      </div>
+      <EditorContent
+        class="editor-surface"
+        :editor="editor"
+      />
+    </template>
   </InfoCard>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Editor, EditorContent } from "@tiptap/vue-3";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -42,11 +63,34 @@ const props = defineProps<{
   issues?: ProofreadingIssue[];
   selectedIssueId?: string | null;
 }>();
+const emit = defineEmits<{
+  pageContextChange: [
+    {
+      currentPage: number;
+      totalPages: number;
+      blockIds: string[];
+    },
+  ];
+}>();
 
 const editor = ref<Editor | null>(null);
 const loading = ref(false);
 const errorMessage = ref("");
 const currentDocument = ref<NormalizedDocument | null>(null);
+const currentPage = ref(1);
+
+const pageNumbers = computed(() => {
+  const pages = currentDocument.value?.blocks
+    .map((block) => block.page)
+    .filter((page): page is number => typeof page === "number" && page > 0);
+
+  return [...new Set(pages ?? [])].sort((left, right) => left - right);
+});
+const hasPagination = computed(() => pageNumbers.value.length > 1);
+const firstPage = computed(() => pageNumbers.value[0] ?? 1);
+const lastPage = computed(
+  () => pageNumbers.value[pageNumbers.value.length - 1] ?? 1,
+);
 
 onMounted(() => {
   void loadDocument();
@@ -66,6 +110,11 @@ watch(
   },
   { deep: true },
 );
+
+watch(currentPage, () => {
+  rerender();
+  emitPageContext();
+});
 
 watch(
   () => props.selectedIssueId,
@@ -99,7 +148,9 @@ async function loadDocument() {
   try {
     const raw = await readTextFile(props.normalizedDocPath);
     currentDocument.value = JSON.parse(raw) as NormalizedDocument;
+    syncCurrentPage();
     rerender();
+    emitPageContext();
     await focusIssue();
   } catch (error) {
     errorMessage.value = extractMessage(error);
@@ -113,7 +164,7 @@ function rerender() {
     return;
   }
 
-  const content = buildEditorDoc(currentDocument.value, props.issues ?? []);
+  const content = buildEditorDoc(visibleDocument(), props.issues ?? []);
 
   if (!editor.value) {
     editor.value = new Editor({
@@ -136,8 +187,15 @@ function rerender() {
 }
 
 async function focusIssue() {
-  if (!props.selectedIssueId || !editor.value) {
+  if (!props.selectedIssueId || !editor.value || !currentDocument.value) {
     return;
+  }
+
+  const issue = props.issues?.find((item) => item.id === props.selectedIssueId);
+  const block = currentDocument.value.blocks.find((item) => item.id === issue?.blockId);
+  if (block?.page && block.page !== currentPage.value) {
+    currentPage.value = block.page;
+    await nextTick();
   }
 
   await nextTick();
@@ -158,8 +216,14 @@ async function focusIssue() {
 }
 
 async function scrollToBlock(blockId: string) {
-  if (!editor.value) {
+  if (!editor.value || !currentDocument.value) {
     return;
+  }
+
+  const block = currentDocument.value.blocks.find((item) => item.id === blockId);
+  if (block?.page && block.page !== currentPage.value) {
+    currentPage.value = block.page;
+    await nextTick();
   }
 
   await nextTick();
@@ -167,6 +231,59 @@ async function scrollToBlock(blockId: string) {
     `[data-block-id="${blockId}"]`,
   );
   target?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function visibleDocument(): NormalizedDocument {
+  if (!currentDocument.value) {
+    return {
+      docId: "",
+      sourceType: "pdf",
+      version: 1,
+      blocks: [],
+    };
+  }
+
+  if (!hasPagination.value) {
+    return currentDocument.value;
+  }
+
+  return {
+    ...currentDocument.value,
+    blocks: currentDocument.value.blocks.filter(
+      (block) => block.page === currentPage.value,
+    ),
+  };
+}
+
+function visibleBlockIds() {
+  return visibleDocument().blocks.map((block) => block.id);
+}
+
+function syncCurrentPage() {
+  if (!pageNumbers.value.length) {
+    currentPage.value = 1;
+    return;
+  }
+
+  if (!pageNumbers.value.includes(currentPage.value)) {
+    currentPage.value = pageNumbers.value[0];
+  }
+}
+
+function emitPageContext() {
+  emit("pageContextChange", {
+    currentPage: currentPage.value,
+    totalPages: pageNumbers.value.length || 1,
+    blockIds: visibleBlockIds(),
+  });
+}
+
+function goPrevPage() {
+  currentPage.value = Math.max(currentPage.value - 1, firstPage.value);
+}
+
+function goNextPage() {
+  currentPage.value = Math.min(currentPage.value + 1, lastPage.value);
 }
 
 function extractMessage(error: unknown) {

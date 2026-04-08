@@ -20,6 +20,8 @@ type Line = {
   avgHeight: number;
 };
 
+type ImportLogger = (message: string, payload?: unknown) => void;
+
 const MIN_TEXT_ITEMS_PER_PAGE = 5;
 const MIN_CHARS_PER_PAGE = 20;
 const MAX_SUSPICIOUS_RATIO = 0.6;
@@ -29,19 +31,33 @@ const PARAGRAPH_GAP_FACTOR = 1.65;
 let pdfjsPromise: Promise<PdfJsLib> | null = null;
 
 export async function extractPdfNormalizedDocument(
-  filePath: string,
+  source: string | Uint8Array,
+  logger?: ImportLogger,
 ): Promise<NormalizedDocument> {
+  logger?.("开始加载 PDF 解析器", {
+    sourceKind: typeof source === "string" ? "file_path" : "binary_data",
+  });
   const pdfjs = await loadPdfJs();
-  const document = await pdfjs.getDocument(filePath).promise;
+  logger?.("PDF 解析器已加载");
+  const document = await pdfjs.getDocument(source).promise;
+  logger?.("PDF 文档已打开", {
+    numPages: document.numPages,
+  });
   const suspiciousPages: number[] = [];
   const blocks: NormalizedBlock[] = [];
   let blockIndex = 0;
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    logger?.("开始提取页面文本", { pageNumber });
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
     const items = content.items.filter(isTextItem).map(normalizeTextItem);
     const totalChars = items.reduce((sum, item) => sum + item.str.length, 0);
+    logger?.("页面文本提取完成", {
+      pageNumber,
+      itemCount: items.length,
+      totalChars,
+    });
 
     if (
       items.length < MIN_TEXT_ITEMS_PER_PAGE ||
@@ -80,9 +96,17 @@ export async function extractPdfNormalizedDocument(
     document.numPages > 0 &&
     suspiciousPages.length / document.numPages >= MAX_SUSPICIOUS_RATIO
   ) {
+    logger?.("PDF 被判定为疑似扫描件", {
+      suspiciousPages,
+      numPages: document.numPages,
+    });
     throw new Error("该 PDF 可能为扫描件或图片型文档，当前版本暂不支持");
   }
 
+  logger?.("PDF 标准化完成", {
+    blockCount: blocks.length,
+    suspiciousPages,
+  });
   return {
     docId: "",
     sourceType: "pdf",

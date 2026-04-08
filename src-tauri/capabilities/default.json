@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口默认权限，允许基础 IPC、文件选择对话框和本地文档读取。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "fs:allow-document-read-recursive",
+    "fs:allow-home-read-recursive"
+  ]
+}

@@ -25,6 +25,12 @@ impl Database {
         Ok(db)
     }
 
+    pub fn from_path(db_path: PathBuf) -> AppResult<Self> {
+        let db = Self { db_path };
+        db.run_migrations()?;
+        Ok(db)
+    }
+
     pub fn connect(&self) -> AppResult<Connection> {
         Ok(Connection::open(&self.db_path)?)
     }

@@ -74,6 +74,7 @@
         :normalized-doc-path="projectDetail.normalizedDocPath"
         :issues="issues"
         :selected-issue-id="selectedIssueId"
+        @page-context-change="handlePageContextChange"
       />
       <DocxSourcePreview
         v-else-if="projectDetail?.sourceType === 'docx'"
@@ -87,23 +88,20 @@
       <div class="side-panel">
         <InfoCard
           title="问题面板"
-          subtitle="当前已经接入校对任务、问题列表与基础统计。"
+          subtitle="只显示校对视图当前页的问题与统计。"
         >
-          <div
-            v-if="job"
-            class="stats-grid"
-          >
+          <div class="stats-grid">
             <article class="metric-tile">
-              <span>任务状态</span>
-              <strong>{{ job.status }}</strong>
+              <span>当前页</span>
+              <strong>{{ currentPageLabel }}</strong>
             </article>
             <article class="metric-tile">
-              <span>已完成</span>
-              <strong>{{ job.completedBlocks }}/{{ job.totalBlocks }}</strong>
+              <span>本页问题</span>
+              <strong>{{ visibleIssues.length }}</strong>
             </article>
             <article class="metric-tile">
-              <span>问题数</span>
-              <strong>{{ job.totalIssues }}</strong>
+              <span>本页调用</span>
+              <strong>{{ visibleCalls.length }}</strong>
             </article>
           </div>
 
@@ -115,11 +113,11 @@
           </div>
 
           <div
-            v-if="issues.length"
+            v-if="visibleIssues.length"
             class="issue-list"
           >
             <button
-              v-for="issue in issues"
+              v-for="issue in visibleIssues"
               :key="issue.id"
               class="issue-card"
               :class="{ 'issue-card--active': selectedIssueId === issue.id }"
@@ -143,8 +141,8 @@
             <div class="placeholder-row">
               <span class="status-dot"></span>
               <div>
-                <strong>暂无问题数据</strong>
-                <p>点击“开始校对”后，系统会按 block 调模型并把问题落到本地数据库。</p>
+                <strong>本页暂无问题</strong>
+                <p>翻页后面板会自动刷新；如果整篇还未校对，先点击“开始校对”。</p>
               </div>
             </div>
           </div>
@@ -152,14 +150,14 @@
 
         <InfoCard
           title="调用日志"
-          subtitle="展示每个 block 的模型调用状态、耗时与错误信息。"
+          subtitle="只显示当前页 block 的模型调用状态、耗时与错误信息。"
         >
           <div
-            v-if="calls.length"
+            v-if="visibleCalls.length"
             class="call-list"
           >
             <article
-              v-for="call in calls"
+              v-for="call in visibleCalls"
               :key="call.id"
               class="call-card"
             >
@@ -190,8 +188,8 @@
             <div class="placeholder-row">
               <span class="status-dot status-dot--warn"></span>
               <div>
-                <strong>暂无调用日志</strong>
-                <p>执行校对后，这里会展示请求结果与失败原因。</p>
+                <strong>本页暂无调用日志</strong>
+                <p>翻页后面板会自动刷新；执行校对后，这里会展示当前页对应 block 的调用结果。</p>
               </div>
             </div>
           </div>
@@ -241,10 +239,23 @@ const projectDetail = ref<ProjectDetail | null>(null);
 const job = ref<ProofreadingJob | null>(null);
 const issues = ref<ProofreadingIssue[]>([]);
 const calls = ref<ProofreadingCall[]>([]);
+const currentPage = ref(1);
+const totalPages = ref(1);
+const visibleBlockIds = ref<string[]>([]);
 
 const projectId = computed(() => String(route.params.id ?? ""));
 const projectTitle = computed(() => projectDetail.value?.name ?? projectId.value);
 const hasFailedBlocks = computed(() => (job.value?.failedBlocks ?? 0) > 0);
+const visibleBlockIdSet = computed(() => new Set(visibleBlockIds.value));
+const visibleIssues = computed(() =>
+  issues.value.filter((issue) => visibleBlockIdSet.value.has(issue.blockId)),
+);
+const visibleCalls = computed(() =>
+  calls.value.filter((call) => visibleBlockIdSet.value.has(call.blockId)),
+);
+const currentPageLabel = computed(() =>
+  totalPages.value > 1 ? `${currentPage.value} / ${totalPages.value}` : "1",
+);
 
 const defaultOptions: ProofreadOptions = {
   mode: "full",
@@ -359,6 +370,16 @@ async function handleSelectIssue(issue: ProofreadingIssue) {
   activeView.value = "proofread";
   await proofreadViewRef.value?.scrollToBlock(issue.blockId);
   await proofreadViewRef.value?.focusIssue();
+}
+
+function handlePageContextChange(payload: {
+  currentPage: number;
+  totalPages: number;
+  blockIds: string[];
+}) {
+  currentPage.value = payload.currentPage;
+  totalPages.value = payload.totalPages;
+  visibleBlockIds.value = payload.blockIds;
 }
 
 async function executeProofreading(

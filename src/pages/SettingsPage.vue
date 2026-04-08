@@ -95,7 +95,9 @@
         >
           {{ loading ? "保存中..." : "保存设置" }}
         </button>
-        <span class="inline-note">配置会保存到本地 SQLite，不会自动上传。</span>
+        <span class="inline-note">
+          配置会保存到本地 SQLite，不会自动上传；未填写 API Key 时，请求不会携带鉴权头。
+        </span>
       </div>
     </InfoCard>
   </section>
