@@ -31,6 +31,16 @@ pub struct NewCallRecord {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct JobMetrics {
+    pub completed_blocks: i64,
+    pub failed_blocks: i64,
+    pub total_issues: i64,
+    pub total_tokens_in: i64,
+    pub total_tokens_out: i64,
+    pub total_latency_ms: i64,
+}
+
 impl ProofreadingRepository {
     pub fn new(db: Database) -> Self {
         Self { db }
@@ -41,16 +51,18 @@ impl ProofreadingRepository {
         conn.execute(
             r#"
             INSERT INTO proofreading_jobs (
-              id, project_id, mode, status, started_at, finished_at, total_blocks,
-              completed_blocks, failed_blocks, total_issues, total_tokens_in,
+              id, project_id, mode, status, options_json, auto_resume, started_at, finished_at,
+              total_blocks, completed_blocks, failed_blocks, total_issues, total_tokens_in,
               total_tokens_out, total_latency_ms
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             "#,
             params![
                 job.id,
                 job.project_id,
                 mode_name(job.mode),
                 status_name(job.status),
+                job.options_json,
+                i64::from(job.auto_resume),
                 job.started_at,
                 job.finished_at,
                 job.total_blocks,
@@ -63,6 +75,22 @@ impl ProofreadingRepository {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn list_resumable_jobs(&self) -> AppResult<Vec<ProofreadingJob>> {
+        let conn = self.db.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, project_id, mode, status, options_json, auto_resume, started_at, finished_at,
+                   total_blocks, completed_blocks, failed_blocks, total_issues, total_tokens_in,
+                   total_tokens_out, total_latency_ms
+            FROM proofreading_jobs
+            WHERE status = 'running' AND auto_resume = 1
+            ORDER BY started_at DESC
+            "#,
+        )?;
+        let rows = stmt.query_map([], map_job_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn update_job(&self, job: &ProofreadingJob) -> AppResult<()> {
@@ -141,6 +169,47 @@ impl ProofreadingRepository {
         Ok((completed, failed))
     }
 
+    pub fn reset_running_blocks(&self, project_id: &str, updated_at: &str) -> AppResult<()> {
+        let conn = self.db.connect()?;
+        conn.execute(
+            r#"
+            UPDATE document_blocks
+            SET proofreading_status = 'pending', updated_at = ?2
+            WHERE project_id = ?1 AND proofreading_status = 'running'
+            "#,
+            params![project_id, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn reset_selected_blocks(
+        &self,
+        project_id: &str,
+        mode: ProofreadingMode,
+        updated_at: &str,
+    ) -> AppResult<i64> {
+        let conn = self.db.connect()?;
+        let changed = match mode {
+            ProofreadingMode::RetryFailed => conn.execute(
+                r#"
+                UPDATE document_blocks
+                SET proofreading_status = 'pending', updated_at = ?2
+                WHERE project_id = ?1 AND proofreading_status = 'failed'
+                "#,
+                params![project_id, updated_at],
+            )?,
+            _ => conn.execute(
+                r#"
+                UPDATE document_blocks
+                SET proofreading_status = 'pending', updated_at = ?2
+                WHERE project_id = ?1
+                "#,
+                params![project_id, updated_at],
+            )?,
+        };
+        Ok(changed as i64)
+    }
+
     pub fn update_block_status(
         &self,
         block_id: &str,
@@ -184,6 +253,43 @@ impl ProofreadingRepository {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn job_metrics(&self, job_id: &str) -> AppResult<JobMetrics> {
+        let conn = self.db.connect()?;
+        let base = conn.query_row(
+            r#"
+            SELECT
+              COALESCE(SUM(CASE WHEN status IN ('completed', 'skipped') THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(prompt_tokens), 0),
+              COALESCE(SUM(completion_tokens), 0),
+              COALESCE(SUM(latency_ms), 0)
+            FROM proofreading_calls
+            WHERE job_id = ?1
+            "#,
+            [job_id],
+            |row| {
+                Ok(JobMetrics {
+                    completed_blocks: row.get(0)?,
+                    failed_blocks: row.get(1)?,
+                    total_issues: 0,
+                    total_tokens_in: row.get(2)?,
+                    total_tokens_out: row.get(3)?,
+                    total_latency_ms: row.get(4)?,
+                })
+            },
+        )?;
+        let total_issues = conn.query_row(
+            "SELECT COUNT(1) FROM proofreading_issues WHERE job_id = ?1",
+            [job_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(JobMetrics {
+            total_issues,
+            ..base
+        })
     }
 
     pub fn replace_issues(
@@ -275,8 +381,8 @@ impl ProofreadingRepository {
         let conn = self.db.connect()?;
         conn.query_row(
             r#"
-            SELECT id, project_id, mode, status, started_at, finished_at, total_blocks,
-                   completed_blocks, failed_blocks, total_issues, total_tokens_in,
+            SELECT id, project_id, mode, status, options_json, auto_resume, started_at, finished_at,
+                   total_blocks, completed_blocks, failed_blocks, total_issues, total_tokens_in,
                    total_tokens_out, total_latency_ms
             FROM proofreading_jobs
             WHERE project_id = ?1
@@ -284,23 +390,7 @@ impl ProofreadingRepository {
             LIMIT 1
             "#,
             [project_id],
-            |row| {
-                Ok(ProofreadingJob {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    mode: parse_mode(&row.get::<_, String>(2)?),
-                    status: parse_status(&row.get::<_, String>(3)?),
-                    started_at: row.get(4)?,
-                    finished_at: row.get(5)?,
-                    total_blocks: row.get(6)?,
-                    completed_blocks: row.get(7)?,
-                    failed_blocks: row.get(8)?,
-                    total_issues: row.get(9)?,
-                    total_tokens_in: row.get(10)?,
-                    total_tokens_out: row.get(11)?,
-                    total_latency_ms: row.get(12)?,
-                })
-            },
+            map_job_row,
         )
         .optional()
         .map_err(Into::into)
@@ -341,6 +431,26 @@ impl ProofreadingRepository {
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+}
+
+fn map_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProofreadingJob> {
+    Ok(ProofreadingJob {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        mode: parse_mode(&row.get::<_, String>(2)?),
+        status: parse_status(&row.get::<_, String>(3)?),
+        options_json: row.get(4)?,
+        auto_resume: row.get::<_, i64>(5)? == 1,
+        started_at: row.get(6)?,
+        finished_at: row.get(7)?,
+        total_blocks: row.get(8)?,
+        completed_blocks: row.get(9)?,
+        failed_blocks: row.get(10)?,
+        total_issues: row.get(11)?,
+        total_tokens_in: row.get(12)?,
+        total_tokens_out: row.get(13)?,
+        total_latency_ms: row.get(14)?,
+    })
 }
 
 fn parse_block_type(value: &str) -> crate::types::BlockType {

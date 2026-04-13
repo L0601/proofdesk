@@ -12,14 +12,14 @@
         <div class="hero-actions">
           <button
             class="primary-button"
-            :disabled="proofreading"
+            :disabled="proofreading || jobRunning"
             @click="handleProofread"
           >
-            {{ proofreading ? "校对中..." : "开始校对" }}
+            {{ proofreading || jobRunning ? "校对中..." : "开始校对" }}
           </button>
           <button
             class="ghost-button"
-            :disabled="proofreading || !hasFailedBlocks"
+            :disabled="proofreading || jobRunning || !hasFailedBlocks"
             @click="handleRetryFailed"
           >
             重试失败块
@@ -200,7 +200,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import InfoCard from "@/components/common/InfoCard.vue";
 import TiptapProofreadView from "@/components/editor/TiptapProofreadView.vue";
@@ -256,6 +256,8 @@ const visibleCalls = computed(() =>
 const currentPageLabel = computed(() =>
   totalPages.value > 1 ? `${currentPage.value} / ${totalPages.value}` : "1",
 );
+const jobRunning = computed(() => job.value?.status === "running");
+let pollingTimer: number | null = null;
 
 const defaultOptions: ProofreadOptions = {
   mode: "full",
@@ -273,6 +275,18 @@ const defaultOptions: ProofreadOptions = {
 
 onMounted(() => {
   void loadPage();
+  pollingTimer = window.setInterval(() => {
+    if (jobRunning.value) {
+      void loadPage();
+    }
+  }, 2000);
+});
+
+onBeforeUnmount(() => {
+  if (pollingTimer !== null) {
+    window.clearInterval(pollingTimer);
+    pollingTimer = null;
+  }
 });
 
 async function loadPage() {
@@ -332,7 +346,7 @@ async function handleProofread() {
   panelMessage.value = "";
 
   try {
-    await executeProofreading(defaultOptions, "校对任务已完成，问题列表与调用日志已刷新。");
+    await executeProofreading(defaultOptions, "校对任务已启动，后台处理中。");
   } catch (error) {
     loadError.value = extractMessage(error, "校对任务执行失败。");
   } finally {
@@ -356,7 +370,7 @@ async function handleRetryFailed() {
         ...defaultOptions,
         mode: "retry_failed",
       },
-      "失败块已重试，问题列表与调用日志已刷新。",
+      "失败块重试任务已启动，后台处理中。",
     );
   } catch (error) {
     loadError.value = extractMessage(error, "失败块重试失败。");

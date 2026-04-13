@@ -56,6 +56,7 @@
             v-model.number="form.maxConcurrency"
             type="number"
             min="1"
+            max="32"
           />
         </label>
         <label class="field">
@@ -96,7 +97,7 @@
           {{ loading ? "保存中..." : "保存设置" }}
         </button>
         <span class="inline-note">
-          配置会保存到本地 SQLite，不会自动上传；未填写 API Key 时，请求不会携带鉴权头。
+          配置会保存到本地 SQLite，不会自动上传；并发数决定同时调用 AI 的块数，建议从 2 到 8 之间逐步测试。
         </span>
       </div>
     </InfoCard>
@@ -156,6 +157,7 @@ async function handleSave() {
   message.value = "";
 
   try {
+    form.maxConcurrency = Math.min(32, Math.max(1, Math.trunc(form.maxConcurrency || 1)));
     const saved = await saveAppSettings({ ...form });
     Object.assign(form, saved);
     message.value = "设置已保存。";

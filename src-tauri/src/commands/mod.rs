@@ -85,10 +85,15 @@ pub async fn start_proofreading(
     project_id: String,
     options: ProofreadOptions,
 ) -> AppResult<ProofreadingJob> {
-    let settings = state.app_settings_repository().get()?;
-    ProofreadService::new(state.db.clone())
-        .start_job(&project_id, options, settings)
-        .await
+    if state.is_project_active(&project_id).await {
+        if let Some(job) = state.proofreading_repository().get_latest_job(&project_id)? {
+            return Ok(job);
+        }
+    }
+
+    let job = ProofreadService::new(state.db.clone()).start_job(&project_id, options)?;
+    state.spawn_job(job.clone()).await;
+    Ok(job)
 }
 
 #[tauri::command]

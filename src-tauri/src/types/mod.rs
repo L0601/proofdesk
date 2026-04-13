@@ -97,6 +97,8 @@ pub struct ProofreadingJob {
     pub project_id: String,
     pub mode: ProofreadingMode,
     pub status: ProofreadingStatus,
+    pub options_json: Option<String>,
+    pub auto_resume: bool,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub total_blocks: i64,

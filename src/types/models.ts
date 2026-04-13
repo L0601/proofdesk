@@ -112,6 +112,8 @@ export interface ProofreadingJob {
   projectId: string;
   mode: ProofreadingMode;
   status: ProofreadingStatus;
+  optionsJson?: string | null;
+  autoResume?: boolean;
   startedAt: string | null;
   finishedAt: string | null;
   totalBlocks: number;

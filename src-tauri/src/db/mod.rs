@@ -8,6 +8,7 @@ use crate::error::AppResult;
 
 const DB_FILE_NAME: &str = "proofdesk.sqlite3";
 const MIGRATION_001: &str = include_str!("migrations/001_init.sql");
+const MIGRATION_002: &str = include_str!("migrations/002_proofreading_runtime.sql");
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -46,20 +47,27 @@ impl Database {
             "#,
         )?;
 
-        let applied = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?1)",
-            ["001_init"],
-            |row| row.get::<_, i64>(0),
-        )?;
-
-        if applied == 0 {
-            conn.execute_batch(MIGRATION_001)?;
-            conn.execute(
-                "INSERT INTO schema_migrations(version) VALUES (?1)",
-                ["001_init"],
-            )?;
-        }
+        apply_migration(&conn, "001_init", MIGRATION_001)?;
+        apply_migration(&conn, "002_proofreading_runtime", MIGRATION_002)?;
 
         Ok(())
     }
+}
+
+fn apply_migration(conn: &Connection, version: &str, sql: &str) -> AppResult<()> {
+    let applied = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?1)",
+        [version],
+        |row| row.get::<_, i64>(0),
+    )?;
+
+    if applied == 0 {
+        conn.execute_batch(sql)?;
+        conn.execute(
+            "INSERT INTO schema_migrations(version) VALUES (?1)",
+            [version],
+        )?;
+    }
+
+    Ok(())
 }

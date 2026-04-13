@@ -23,7 +23,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let db = Database::init(app.handle())?;
-            app.manage(AppState { db });
+            let state = AppState::new(db);
+            state.resume_pending_jobs();
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
