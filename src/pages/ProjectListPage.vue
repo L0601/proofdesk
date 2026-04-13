@@ -68,22 +68,30 @@
           v-if="projects.length"
           class="project-list"
         >
-          <RouterLink
+          <article
             v-for="project in projects"
             :key="project.id"
             class="project-card"
-            :to="`/project/${project.id}`"
           >
             <div class="project-card__header">
-              <strong>{{ project.name }}</strong>
+              <RouterLink :to="`/project/${project.id}`">
+                <strong>{{ project.name }}</strong>
+              </RouterLink>
               <span class="project-pill">{{ project.sourceType }}</span>
             </div>
             <p class="project-card__meta">{{ project.sourceFileName }}</p>
             <div class="project-card__footer">
               <span>{{ project.totalBlocks }} 个段落</span>
               <span>{{ project.status }}</span>
+              <button
+                class="ghost-button"
+                :disabled="loading || project.status === 'processing'"
+                @click="handleDeleteProject(project)"
+              >
+                删除
+              </button>
             </div>
-          </RouterLink>
+          </article>
         </div>
 
         <div
@@ -116,6 +124,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import InfoCard from "@/components/common/InfoCard.vue";
 import {
+  deleteProject,
   importDocument,
   importNormalizedDocument,
   listProjects,
@@ -149,6 +158,35 @@ async function refreshProjects() {
   }
 
   projects.value = await listProjects();
+}
+
+async function handleDeleteProject(project: ProjectSummary) {
+  if (!isTauriApp()) {
+    errorMessage.value = "请通过 Tauri 桌面环境删除项目。";
+    return;
+  }
+
+  if (project.status === "processing") {
+    errorMessage.value = "项目正在后台处理中，暂不允许删除。";
+    return;
+  }
+
+  const confirmed = window.confirm(`确认删除项目「${project.name}」吗？该项目的本地数据会被全部移除。`);
+  if (!confirmed) {
+    return;
+  }
+
+  loading.value = true;
+  errorMessage.value = "";
+
+  try {
+    await deleteProject(project.id);
+    await refreshProjects();
+  } catch (error) {
+    errorMessage.value = extractMessage(error);
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function handleImport() {

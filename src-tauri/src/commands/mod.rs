@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::error::AppResult;
 use crate::services::import_service::ImportService;
@@ -38,6 +38,25 @@ pub fn get_project_detail(
     project_id: String,
 ) -> AppResult<Option<ProjectDetail>> {
     state.project_repository().get(&project_id)
+}
+
+#[tauri::command]
+pub async fn delete_project(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<()> {
+    if state.is_project_active(&project_id).await {
+        return Err(crate::error::AppError::new(
+            "project_processing",
+            "项目正在后台处理中，暂不允许删除",
+        ));
+    }
+
+    let project_root = app.path().app_data_dir()?.join("projects").join(&project_id);
+    state.project_repository().delete(&project_id)?;
+    state.project_repository().delete_project_dir(&project_root)?;
+    Ok(())
 }
 
 #[tauri::command]

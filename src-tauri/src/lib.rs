@@ -8,9 +8,9 @@ mod state;
 mod types;
 
 use commands::{
-    get_app_settings, get_project_detail, import_document, import_normalized_document,
-    get_latest_proofreading_job, list_proofreading_calls, list_proofreading_issues,
-    list_projects, ping, save_app_settings, start_proofreading,
+    delete_project, get_app_settings, get_latest_proofreading_job, get_project_detail,
+    import_document, import_normalized_document, list_proofreading_calls,
+    list_proofreading_issues, list_projects, ping, save_app_settings, start_proofreading,
 };
 use db::Database;
 use state::AppState;
@@ -32,6 +32,7 @@ pub fn run() {
             ping,
             list_projects,
             get_project_detail,
+            delete_project,
             get_app_settings,
             get_latest_proofreading_job,
             list_proofreading_calls,

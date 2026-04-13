@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::Path;
+
 use crate::db::Database;
 use crate::error::AppResult;
 use crate::types::ProjectSummary;
@@ -123,6 +126,39 @@ impl ProjectRepository {
                 updated_at
             ],
         )?;
+        Ok(())
+    }
+
+    pub fn delete(&self, project_id: &str) -> AppResult<()> {
+        let mut conn = self.db.connect()?;
+        let tx = conn.transaction()?;
+
+        tx.execute(
+            "DELETE FROM proofreading_issues WHERE project_id = ?1",
+            [project_id],
+        )?;
+        tx.execute(
+            "DELETE FROM proofreading_calls WHERE project_id = ?1",
+            [project_id],
+        )?;
+        tx.execute(
+            "DELETE FROM proofreading_jobs WHERE project_id = ?1",
+            [project_id],
+        )?;
+        tx.execute(
+            "DELETE FROM document_blocks WHERE project_id = ?1",
+            [project_id],
+        )?;
+        tx.execute("DELETE FROM projects WHERE id = ?1", [project_id])?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_project_dir(&self, project_root: &Path) -> AppResult<()> {
+        if project_root.exists() {
+            fs::remove_dir_all(project_root)?;
+        }
         Ok(())
     }
 }

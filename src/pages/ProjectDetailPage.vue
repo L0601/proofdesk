@@ -39,6 +39,13 @@
           >
             原文对照
           </button>
+          <button
+            class="ghost-button"
+            :disabled="proofreading || jobRunning"
+            @click="handleDeleteProject"
+          >
+            删除项目
+          </button>
           <RouterLink
             class="ghost-link"
             to="/"
@@ -201,12 +208,12 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import InfoCard from "@/components/common/InfoCard.vue";
 import TiptapProofreadView from "@/components/editor/TiptapProofreadView.vue";
 import DocxSourcePreview from "@/components/preview/DocxSourcePreview.vue";
 import PdfSourcePreview from "@/components/preview/PdfSourcePreview.vue";
-import { getProjectDetail } from "@/api/projects";
+import { deleteProject, getProjectDetail } from "@/api/projects";
 import {
   getLatestProofreadingJob,
   listProofreadingCalls,
@@ -228,6 +235,7 @@ type ProofreadViewExpose = {
 };
 
 const route = useRoute();
+const router = useRouter();
 const proofreadViewRef = ref<ProofreadViewExpose | null>(null);
 const activeView = ref<"proofread" | "source">("proofread");
 const loading = ref(false);
@@ -374,6 +382,41 @@ async function handleRetryFailed() {
     );
   } catch (error) {
     loadError.value = extractMessage(error, "失败块重试失败。");
+  } finally {
+    proofreading.value = false;
+  }
+}
+
+async function handleDeleteProject() {
+  if (!projectDetail.value) {
+    return;
+  }
+
+  if (!isTauriApp()) {
+    loadError.value = "请通过 Tauri 桌面环境删除项目。";
+    return;
+  }
+
+  if (jobRunning.value) {
+    loadError.value = "项目正在后台处理中，暂不允许删除。";
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `确认删除项目「${projectDetail.value.name}」吗？该项目的本地数据会被全部移除。`,
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  proofreading.value = true;
+  loadError.value = "";
+
+  try {
+    await deleteProject(projectId.value);
+    await router.push("/");
+  } catch (error) {
+    loadError.value = extractMessage(error, "删除项目失败。");
   } finally {
     proofreading.value = false;
   }

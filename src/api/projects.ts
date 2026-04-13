@@ -18,6 +18,10 @@ export function getProjectDetail(projectId: string) {
   return invoke<ProjectDetail | null>("get_project_detail", { projectId });
 }
 
+export function deleteProject(projectId: string) {
+  return invoke<void>("delete_project", { projectId });
+}
+
 export function importNormalizedDocument(
   filePath: string,
   sourceType: SourceType,
