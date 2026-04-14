@@ -22,6 +22,10 @@ type Line = {
 
 type ImportLogger = (message: string, payload?: unknown) => void;
 
+type PdfImportOptions = {
+  minBlockChars?: number;
+};
+
 const MIN_TEXT_ITEMS_PER_PAGE = 5;
 const MIN_CHARS_PER_PAGE = 20;
 const MAX_SUSPICIOUS_RATIO = 0.6;
@@ -32,10 +36,13 @@ let pdfjsPromise: Promise<PdfJsLib> | null = null;
 
 export async function extractPdfNormalizedDocument(
   source: string | Uint8Array,
+  options: PdfImportOptions = {},
   logger?: ImportLogger,
 ): Promise<NormalizedDocument> {
+  const minBlockChars = Math.max(0, Math.trunc(options.minBlockChars ?? 16));
   logger?.("开始加载 PDF 解析器", {
     sourceKind: typeof source === "string" ? "file_path" : "binary_data",
+    minBlockChars,
   });
   const pdfjs = await loadPdfJs();
   logger?.("PDF 解析器已加载");
@@ -70,7 +77,12 @@ export async function extractPdfNormalizedDocument(
     const paragraphs = buildParagraphs(lines);
 
     for (const paragraph of paragraphs) {
-      if (!paragraph.text.trim()) {
+      const text = sanitizePdfParagraphText(paragraph.text);
+      if (!text) {
+        continue;
+      }
+
+      if (text.length < minBlockChars) {
         continue;
       }
 
@@ -78,8 +90,8 @@ export async function extractPdfNormalizedDocument(
         id: `blk_${String(blockIndex + 1).padStart(6, "0")}`,
         type: "paragraph",
         page: pageNumber,
-        runs: [{ text: paragraph.text, marks: [] }],
-        text: paragraph.text,
+        runs: [{ text, marks: [] }],
+        text,
         layout: defaultLayout(),
         sourceMap: {
           sourceType: "pdf",
@@ -285,6 +297,17 @@ function buildParagraphs(lines: Line[]) {
   }
 
   return paragraphs;
+}
+
+function sanitizePdfParagraphText(text: string) {
+  return text
+    .replace(/^[\s\u3000\t]+/g, "")
+    .replace(/[\s\u3000\t]+$/g, "")
+    .replace(/\u3000+/g, " ")
+    .replace(/\t+/g, " ")
+    .replace(/[ \f\v]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .trim();
 }
 
 function defaultLayout(): BlockLayout {

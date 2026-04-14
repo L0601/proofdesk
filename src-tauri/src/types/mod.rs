@@ -159,9 +159,15 @@ pub struct AppSettings {
     pub model: String,
     pub timeout_ms: i64,
     pub max_concurrency: i64,
+    #[serde(default = "default_pdf_min_block_chars")]
+    pub pdf_min_block_chars: i64,
     pub temperature: f64,
     pub max_tokens: i64,
     pub system_prompt_template: String,
+}
+
+fn default_pdf_min_block_chars() -> i64 {
+    16
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

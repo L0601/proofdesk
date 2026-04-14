@@ -60,6 +60,15 @@
           />
         </label>
         <label class="field">
+          <span>PDF Min Block Chars</span>
+          <input
+            v-model.number="form.pdfMinBlockChars"
+            type="number"
+            min="0"
+            max="200"
+          />
+        </label>
+        <label class="field">
           <span>Temperature</span>
           <input
             v-model.number="form.temperature"
@@ -120,6 +129,7 @@ const form = reactive<AppSettings>({
   model: "",
   timeoutMs: 60000,
   maxConcurrency: 4,
+  pdfMinBlockChars: 16,
   temperature: 0.2,
   maxTokens: 1200,
   systemPromptTemplate: "",
@@ -158,6 +168,10 @@ async function handleSave() {
 
   try {
     form.maxConcurrency = Math.min(32, Math.max(1, Math.trunc(form.maxConcurrency || 1)));
+    form.pdfMinBlockChars = Math.min(
+      200,
+      Math.max(0, Math.trunc(form.pdfMinBlockChars || 0)),
+    );
     const saved = await saveAppSettings({ ...form });
     Object.assign(form, saved);
     message.value = "设置已保存。";

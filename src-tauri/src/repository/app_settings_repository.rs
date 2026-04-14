@@ -53,6 +53,7 @@ fn default_settings() -> AppSettings {
         model: "gpt-4.1-mini".to_string(),
         timeout_ms: 60_000,
         max_concurrency: 4,
+        pdf_min_block_chars: 16,
         temperature: 0.2,
         max_tokens: 1200,
         system_prompt_template: "你是一名中文文稿校对助手。请严格输出结构化 JSON，只返回明确存在的问题。".to_string(),

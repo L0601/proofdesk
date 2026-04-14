@@ -123,13 +123,14 @@ import { computed, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import InfoCard from "@/components/common/InfoCard.vue";
+import { getAppSettings } from "@/api/settings";
 import {
   deleteProject,
   importDocument,
   importNormalizedDocument,
   listProjects,
 } from "@/api/projects";
-import type { ProjectSummary } from "@/types/models";
+import type { AppSettings, ProjectSummary } from "@/types/models";
 import { extractPdfNormalizedDocument } from "@/utils/pdfImport";
 import { isTauriApp } from "@/utils/runtime";
 
@@ -283,6 +284,8 @@ async function processSelectedFile(selected: SelectedFile) {
 }
 
 async function parsePdf(selected: SelectedFile) {
+  const settings = await loadPdfImportSettings();
+
   if (selected.kind === "path") {
     logImport("开始读取 Tauri 本地文件", {
       filePath: selected.filePath,
@@ -291,7 +294,11 @@ async function parsePdf(selected: SelectedFile) {
     logImport("Tauri 本地文件读取完成", {
       byteLength: bytes.byteLength,
     });
-    return extractPdfNormalizedDocument(bytes, logImport);
+    return extractPdfNormalizedDocument(
+      bytes,
+      { minBlockChars: settings.pdfMinBlockChars },
+      logImport,
+    );
   }
 
   logImport("开始读取浏览器文件内容", {
@@ -300,7 +307,29 @@ async function parsePdf(selected: SelectedFile) {
   });
   const bytes = new Uint8Array(await selected.file.arrayBuffer());
   logImport("浏览器文件读取完成", { byteLength: bytes.byteLength });
-  return extractPdfNormalizedDocument(bytes, logImport);
+  return extractPdfNormalizedDocument(
+    bytes,
+    { minBlockChars: settings.pdfMinBlockChars },
+    logImport,
+  );
+}
+
+async function loadPdfImportSettings(): Promise<AppSettings> {
+  if (!isTauriApp()) {
+    return {
+      baseUrl: "",
+      apiKey: "",
+      model: "",
+      timeoutMs: 60000,
+      maxConcurrency: 4,
+      pdfMinBlockChars: 16,
+      temperature: 0.2,
+      maxTokens: 1200,
+      systemPromptTemplate: "",
+    };
+  }
+
+  return getAppSettings();
 }
 
 function getSelectedFileName(selected: SelectedFile) {
