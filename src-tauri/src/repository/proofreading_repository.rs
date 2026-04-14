@@ -1,3 +1,12 @@
+//! 校对仓储。
+//!
+//! 这是数据库层里最核心的一块：
+//! - job 状态
+//! - block 状态
+//! - 模型调用记录
+//! - 问题列表
+//! 都通过这里读写。
+
 use rusqlite::{params, OptionalExtension};
 
 use crate::db::Database;
@@ -12,6 +21,8 @@ pub struct ProofreadingRepository {
     db: Database,
 }
 
+/// 写入 `proofreading_calls` 表时使用的参数对象。
+/// 这样可以避免 `insert_call` 带上一长串位置参数。
 #[derive(Debug, Clone)]
 pub struct NewCallRecord {
     pub id: String,
@@ -31,6 +42,7 @@ pub struct NewCallRecord {
     pub error_message: Option<String>,
 }
 
+/// job 收尾时用到的聚合统计结果。
 #[derive(Debug, Clone, Copy)]
 pub struct JobMetrics {
     pub pending_blocks: i64,
@@ -48,6 +60,7 @@ impl ProofreadingRepository {
         Self { db }
     }
 
+    /// 新建一条 job 记录。
     pub fn create_job(&self, job: &ProofreadingJob) -> AppResult<()> {
         let conn = self.db.connect()?;
         conn.execute(
@@ -79,6 +92,7 @@ impl ProofreadingRepository {
         Ok(())
     }
 
+    /// 列出所有允许自动恢复的 running job。
     pub fn list_resumable_jobs(&self) -> AppResult<Vec<ProofreadingJob>> {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(
@@ -95,6 +109,7 @@ impl ProofreadingRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// 查询某个项目当前是否有运行中的 job。
     pub fn get_running_job(&self, project_id: &str) -> AppResult<Option<ProofreadingJob>> {
         let conn = self.db.connect()?;
         conn.query_row(
@@ -114,6 +129,7 @@ impl ProofreadingRepository {
         .map_err(Into::into)
     }
 
+    /// 更新 job 的聚合状态和统计数字。
     pub fn update_job(&self, job: &ProofreadingJob) -> AppResult<()> {
         let conn = self.db.connect()?;
         conn.execute(
@@ -144,6 +160,7 @@ impl ProofreadingRepository {
         Ok(())
     }
 
+    /// 读取某个项目的全部 block。
     pub fn list_blocks(&self, project_id: &str) -> AppResult<Vec<DocumentBlock>> {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(
@@ -175,6 +192,7 @@ impl ProofreadingRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// 聚合项目维度的 completed/failed 数量。
     pub fn count_block_statuses(&self, project_id: &str) -> AppResult<(i64, i64)> {
         let conn = self.db.connect()?;
         let completed = conn.query_row(
@@ -190,6 +208,7 @@ impl ProofreadingRepository {
         Ok((completed, failed))
     }
 
+    /// 恢复任务前，把遗留在 `running` 的 block 回退到 `pending`。
     pub fn reset_running_blocks(&self, project_id: &str, updated_at: &str) -> AppResult<()> {
         let conn = self.db.connect()?;
         conn.execute(
@@ -203,6 +222,10 @@ impl ProofreadingRepository {
         Ok(())
     }
 
+    /// 启动新 job 时，把本次要处理的 block 重置成 `pending`。
+    ///
+    /// - `RetryFailed` 只处理失败块
+    /// - 其他模式处理整个项目
     pub fn reset_selected_blocks(
         &self,
         project_id: &str,
@@ -231,6 +254,7 @@ impl ProofreadingRepository {
         Ok(changed as i64)
     }
 
+    /// 更新单个 block 的执行状态。
     pub fn update_block_status(
         &self,
         block_id: &str,
@@ -245,6 +269,7 @@ impl ProofreadingRepository {
         Ok(())
     }
 
+    /// 写入一次模型调用记录。
     pub fn insert_call(&self, record: &NewCallRecord) -> AppResult<()> {
         let conn = self.db.connect()?;
         conn.execute(
@@ -276,6 +301,9 @@ impl ProofreadingRepository {
         Ok(())
     }
 
+    /// 聚合一个 job 的统计信息。
+    ///
+    /// 这里既统计 block 当前状态，也统计 calls/issues 的数量和 token。
     pub fn job_metrics(&self, job_id: &str) -> AppResult<JobMetrics> {
         let conn = self.db.connect()?;
         let base = conn.query_row(
@@ -322,6 +350,9 @@ impl ProofreadingRepository {
         })
     }
 
+    /// 用最新结果覆盖某个 block 的问题列表。
+    ///
+    /// 一次 block 校对结果天然就是全量快照，所以这里先删后插。
     pub fn replace_issues(
         &self,
         project_id: &str,
@@ -370,6 +401,7 @@ impl ProofreadingRepository {
         Ok(())
     }
 
+    /// 读取项目的问题列表，供前端问题面板展示。
     pub fn list_issues(&self, project_id: &str) -> AppResult<Vec<ProofreadingIssue>> {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(
@@ -407,6 +439,7 @@ impl ProofreadingRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// 读取最近一次 job，供详情页和防重逻辑使用。
     pub fn get_latest_job(&self, project_id: &str) -> AppResult<Option<ProofreadingJob>> {
         let conn = self.db.connect()?;
         conn.query_row(
@@ -426,6 +459,7 @@ impl ProofreadingRepository {
         .map_err(Into::into)
     }
 
+    /// 读取项目的调用日志。
     pub fn list_calls(&self, project_id: &str) -> AppResult<Vec<ProofreadingCall>> {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(

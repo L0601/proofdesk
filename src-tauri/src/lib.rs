@@ -1,3 +1,10 @@
+//! Tauri 后端入口。
+//!
+//! 这里主要负责三件事：
+//! 1. 注册模块。
+//! 2. 初始化数据库与全局状态。
+//! 3. 把前端可调用的命令暴露给 Tauri。
+
 mod commands;
 mod db;
 mod error;
@@ -18,13 +25,19 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `Builder` 可以理解成桌面应用启动时的装配器。
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
+            // 先保证数据库和迁移已经就绪。
             let db = Database::init(app.handle())?;
             let state = AppState::new(db);
+
+            // 启动时自动恢复上次未完成且允许恢复的任务。
             state.resume_pending_jobs();
+
+            // 把状态挂进 Tauri，后续 command 可通过 `State<AppState>` 取到。
             app.manage(state);
             Ok(())
         })

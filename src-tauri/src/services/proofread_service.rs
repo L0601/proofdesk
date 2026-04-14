@@ -1,3 +1,13 @@
+//! AI 校对服务。
+//!
+//! 这是业务编排最集中的文件，负责：
+//! - 创建 job
+//! - 选取待处理 block
+//! - 并发调度 worker
+//! - 调模型
+//! - 记录 calls / issues / 日志
+//! - 更新 job 和项目状态
+
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,6 +38,7 @@ pub struct ProofreadService {
     db: Database,
 }
 
+/// 下面几组结构体对应模型接口的最小请求/响应结构。
 #[derive(Debug, Deserialize, Serialize)]
 struct ChatCompletionResponse {
     choices: Vec<Choice>,
@@ -89,6 +100,7 @@ struct ModelCallResult {
     usage: Usage,
 }
 
+/// 每个并发 worker 处理 block 时共享的上下文。
 #[derive(Clone)]
 struct WorkerContext {
     db: Database,
@@ -105,6 +117,8 @@ impl ProofreadService {
         Self { db }
     }
 
+    /// 创建一个新 job，但不负责实际执行。
+    /// 真正的执行由 `AppState::spawn_job` 异步触发。
     pub fn start_job(
         &self,
         project_id: &str,
@@ -121,6 +135,7 @@ impl ProofreadService {
         }
 
         let now = crate::services::import_service::now_rfc3339()?;
+        // 本次要跑的 block 先统一回到 pending，保证任务起点明确。
         repo.reset_selected_blocks(project_id, options.mode, &now)?;
 
         let job = ProofreadingJob {
@@ -152,12 +167,21 @@ impl ProofreadService {
         Ok(job)
     }
 
+    /// 真正执行一个 job。
+    ///
+    /// 流程是：
+    /// 1. 读设置和 job 参数快照
+    /// 2. 取出待处理 block
+    /// 3. 按并发数创建 worker
+    /// 4. 等所有 worker 退出
+    /// 5. 聚合统计并收尾
     pub async fn run_job(&self, mut job: ProofreadingJob) -> AppResult<()> {
         let settings = AppSettingsRepository::new(self.db.clone()).get()?;
         let repo = ProofreadingRepository::new(self.db.clone());
         let project_repo = ProjectRepository::new(self.db.clone());
         let options = parse_job_options(&job)?;
         let now = crate::services::import_service::now_rfc3339()?;
+        // 恢复任务前，先把意外退出留下的 running block 回退到 pending。
         repo.reset_running_blocks(&job.project_id, &now)?;
 
         let blocks = select_pending_blocks(&repo.list_blocks(&job.project_id)?, options.mode)?;
@@ -169,6 +193,7 @@ impl ProofreadService {
 
         let client = build_client(&settings)?;
         let queue = Arc::new(Mutex::new(VecDeque::from(blocks)));
+        // 并发数来自设置页，并在后端再做一次上限保护。
         let worker_count = settings.max_concurrency.clamp(1, 32) as usize;
         let mut handles = Vec::new();
 
@@ -198,6 +223,7 @@ impl ProofreadService {
         Ok(())
     }
 
+    /// 整个 job 主流程失败时的兜底收尾逻辑。
     pub fn fail_job(&self, mut job: ProofreadingJob, error_message: &str) -> AppResult<()> {
         let repo = ProofreadingRepository::new(self.db.clone());
         let project_repo = ProjectRepository::new(self.db.clone());
@@ -229,6 +255,7 @@ impl ProofreadService {
 }
 
 impl WorkerContext {
+    /// 一个 worker 会不断从共享队列取 block，直到队列为空。
     async fn run(&self) {
         loop {
             let block = self.next_block().await;
@@ -241,11 +268,13 @@ impl WorkerContext {
         }
     }
 
+    /// 从共享队列里取一个 block。
     async fn next_block(&self) -> Option<DocumentBlock> {
         let mut queue = self.queue.lock().await;
         queue.pop_front()
     }
 
+    /// 单个 block 的完整处理流程。
     async fn process_block(&self, block: DocumentBlock) -> AppResult<()> {
         let repo = ProofreadingRepository::new(self.db.clone());
         let started_at = crate::services::import_service::now_rfc3339()?;
@@ -269,6 +298,7 @@ impl WorkerContext {
         }
     }
 
+    /// 真实调用模型的分支。
     async fn handle_remote(
         &self,
         repo: &ProofreadingRepository,
@@ -293,6 +323,7 @@ impl WorkerContext {
                     &finished_at,
                 )?;
 
+                // 日志会同时写入文件和数据库。
                 let _ = append_model_log(
                     &self.project_id,
                     &self.job_id,
@@ -356,6 +387,7 @@ impl WorkerContext {
         }
     }
 
+    /// 没配完整模型参数时，走演示模式，不做真实调用。
     fn handle_skipped(
         &self,
         repo: &ProofreadingRepository,
@@ -397,6 +429,7 @@ impl WorkerContext {
         Ok(())
     }
 
+    /// 处理代码内部异常，确保 block 不会卡在 running。
     async fn mark_internal_failure(
         &self,
         block: &DocumentBlock,
@@ -435,6 +468,7 @@ impl WorkerContext {
     }
 }
 
+/// 本地命令行调试用的直接调用入口，不经过 job/worker 调度。
 pub async fn debug_call_text(
     settings: &AppSettings,
     block_id: &str,
@@ -469,6 +503,7 @@ pub async fn debug_call_text(
     })
 }
 
+/// 根据设置构造 HTTP 客户端。
 fn build_client(settings: &AppSettings) -> AppResult<Option<Client>> {
     if !can_call_model(settings) {
         return Ok(None);
@@ -481,6 +516,7 @@ fn build_client(settings: &AppSettings) -> AppResult<Option<Client>> {
     Ok(Some(client))
 }
 
+/// 调用 chat completions 接口，并解析最小结果结构。
 async fn call_model(
     client: &Client,
     request_body: &serde_json::Value,
@@ -526,6 +562,8 @@ async fn call_model(
     })
 }
 
+/// 从 job 保存的 JSON 快照恢复任务选项。
+/// 这是“关闭程序后还能继续”的关键之一。
 fn parse_job_options(job: &ProofreadingJob) -> AppResult<ProofreadOptions> {
     let raw = job
         .options_json
@@ -535,6 +573,7 @@ fn parse_job_options(job: &ProofreadingJob) -> AppResult<ProofreadOptions> {
         .map_err(|error| AppError::new("invalid_job_options", error.to_string()))
 }
 
+/// job 收尾逻辑：同步 job 与项目两层状态。
 fn finalize_job(
     repo: &ProofreadingRepository,
     project_repo: &ProjectRepository,
@@ -561,6 +600,7 @@ fn finalize_job(
     Ok(())
 }
 
+/// 把聚合统计结果回填到 job。
 fn apply_metrics(job: &mut ProofreadingJob, metrics: JobMetrics, finished_at: &str) {
     job.completed_blocks = metrics.completed_blocks;
     job.failed_blocks = metrics.failed_blocks;
@@ -579,6 +619,8 @@ fn apply_metrics(job: &mut ProofreadingJob, metrics: JobMetrics, finished_at: &s
     job.finished_at = Some(finished_at.to_string());
 }
 
+/// 组装发给模型的请求体。
+/// `response_format` 用 JSON Schema 限制模型输出结构。
 fn build_model_request_body(
     settings: &AppSettings,
     request_payload: &RequestPayload<'_>,
@@ -642,6 +684,7 @@ fn build_model_request_body(
     }))
 }
 
+/// 把 prompt / response / error 追加写入当天日志文件。
 fn append_model_log(
     project_id: &str,
     job_id: &str,
@@ -670,6 +713,7 @@ fn append_model_log(
     Ok(())
 }
 
+/// 生成当天日志文件路径。
 fn log_file_path() -> AppResult<PathBuf> {
     let current_dir = std::env::current_dir()
         .map_err(|error| AppError::new("log_path_error", error.to_string()))?;
@@ -677,6 +721,7 @@ fn log_file_path() -> AppResult<PathBuf> {
     Ok(current_dir.join("logs").join(format!("{date}.log")))
 }
 
+/// 把模型返回的 JSON 结构转换成数据库里的问题对象。
 fn to_proofreading_issues(
     project_id: &str,
     job_id: &str,
@@ -717,12 +762,14 @@ fn to_proofreading_issues(
     Ok(issues)
 }
 
+/// 模型有时会返回带 Markdown 包裹的 JSON，这里先做一层容错解析。
 fn parse_model_payload(raw_content: &str) -> AppResult<ModelPayload> {
     let content = extract_json_object(raw_content);
     serde_json::from_str(&content)
         .map_err(|error| AppError::new("model_payload_error", error.to_string()))
 }
 
+/// 尽量从任意文本中截出一个 JSON object。
 fn extract_json_object(raw: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
         return value.to_string();
@@ -738,6 +785,7 @@ fn extract_json_object(raw: &str) -> String {
     raw.to_string()
 }
 
+/// 把前端勾选的问题类型转成提示词规则。
 fn build_rules(issue_types: &[IssueType]) -> Vec<String> {
     let labels = issue_types
         .iter()
@@ -760,6 +808,7 @@ fn build_rules(issue_types: &[IssueType]) -> Vec<String> {
     ]
 }
 
+/// 按模式筛选要处理的 block 集合。
 fn select_blocks(
     blocks: &[crate::types::DocumentBlock],
     mode: ProofreadingMode,
@@ -780,6 +829,7 @@ fn select_blocks(
     Ok(selected)
 }
 
+/// 在模式筛选后，再只保留 `pending` block。
 fn select_pending_blocks(
     blocks: &[crate::types::DocumentBlock],
     mode: ProofreadingMode,
@@ -791,10 +841,12 @@ fn select_pending_blocks(
         .collect())
 }
 
+/// 判断是否具备真实调模型的最低条件。
 fn can_call_model(settings: &AppSettings) -> bool {
     !settings.base_url.trim().is_empty() && !settings.model.trim().is_empty()
 }
 
+/// 展示给 UI 或日志时使用的模型名。
 fn display_model_name(settings: &AppSettings) -> String {
     if settings.model.trim().is_empty() {
         "demo-skip".to_string()
@@ -803,6 +855,7 @@ fn display_model_name(settings: &AppSettings) -> String {
     }
 }
 
+/// 下面这些函数负责把模型的字符串值映射回内部枚举。
 fn parse_issue_type(value: &str) -> IssueType {
     match value {
         "punctuation" => IssueType::Punctuation,
@@ -822,6 +875,7 @@ fn parse_severity(value: &str) -> IssueSeverity {
     }
 }
 
+/// 截取问题前面的少量上下文，供前端展示。
 fn text_prefix(text: &str, start_offset: i64) -> Option<String> {
     let start = start_offset.max(0) as usize;
     let chars = text.chars().collect::<Vec<_>>();
@@ -831,6 +885,7 @@ fn text_prefix(text: &str, start_offset: i64) -> Option<String> {
     if prefix.is_empty() { None } else { Some(prefix) }
 }
 
+/// 截取问题后面的少量上下文。
 fn text_suffix(text: &str, end_offset: i64) -> Option<String> {
     let end = end_offset.max(0) as usize;
     let chars = text.chars().collect::<Vec<_>>();

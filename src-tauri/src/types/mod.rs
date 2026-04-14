@@ -1,5 +1,12 @@
+//! 共享数据模型。
+//!
+//! 这一层的结构体同时承担两种职责：
+//! 1. 后端内部的业务对象。
+//! 2. 前后端通信时的 JSON DTO。
+
 use serde::{Deserialize, Serialize};
 
+/// 项目列表页需要的摘要信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
@@ -15,6 +22,8 @@ pub struct ProjectSummary {
     pub updated_at: String,
 }
 
+/// 项目详情页对象。
+/// 通过 `flatten` 复用 `ProjectSummary`，减少重复字段定义。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDetail {
@@ -24,6 +33,7 @@ pub struct ProjectDetail {
     pub normalized_doc_path: String,
 }
 
+/// 一个文本 run 表示同一段中格式连续不变的一小段文字。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockRun {
@@ -31,6 +41,7 @@ pub struct BlockRun {
     pub marks: Vec<TextMark>,
 }
 
+/// 标准化 block 的版式信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockLayout {
@@ -40,6 +51,7 @@ pub struct BlockLayout {
     pub line_break_after: i64,
 }
 
+/// 从标准化 block 回溯到源文档位置的信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceMap {
@@ -51,6 +63,8 @@ pub struct SourceMap {
     pub locator: Option<String>,
 }
 
+/// 导入阶段生成的标准化 block。
+/// 它是“源文件格式”和“数据库落库结构”之间的中间层。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedBlock {
@@ -64,6 +78,8 @@ pub struct NormalizedBlock {
     pub source_map: SourceMap,
 }
 
+/// 标准化文档。
+/// PDF 前端解析和 DOCX 后端解析，最终都会统一落到这个结构上。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedDocument {
@@ -73,6 +89,8 @@ pub struct NormalizedDocument {
     pub blocks: Vec<NormalizedBlock>,
 }
 
+/// 数据库 `document_blocks` 表的一行。
+/// 这是 AI 校对真正消费的最小工作单元。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentBlock {
@@ -90,6 +108,8 @@ pub struct DocumentBlock {
     pub updated_at: String,
 }
 
+/// 一次校对任务。
+/// 注意它是“整批任务”级别，不是单个 block 的状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofreadingJob {
@@ -110,6 +130,7 @@ pub struct ProofreadingJob {
     pub total_latency_ms: i64,
 }
 
+/// 一次具体的模型调用记录。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofreadingCall {
@@ -130,6 +151,7 @@ pub struct ProofreadingCall {
     pub error_message: Option<String>,
 }
 
+/// 模型返回的一条问题记录。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofreadingIssue {
@@ -151,6 +173,7 @@ pub struct ProofreadingIssue {
     pub created_at: String,
 }
 
+/// 设置页里的模型参数配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -166,10 +189,13 @@ pub struct AppSettings {
     pub system_prompt_template: String,
 }
 
+/// 兼容旧配置时的默认值。
 fn default_pdf_min_block_chars() -> i64 {
     16
 }
 
+/// “开始校对”时传下来的选项快照。
+/// 会被写入 job，供任务恢复时重新读取。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofreadOptions {
@@ -179,6 +205,7 @@ pub struct ProofreadOptions {
     pub issue_types: Vec<IssueType>,
 }
 
+/// 源文档类型。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SourceType {
@@ -187,6 +214,7 @@ pub enum SourceType {
 }
 
 impl SourceType {
+    /// 数据库存储用的小写字符串表示。
     pub fn as_str(self) -> &'static str {
         match self {
             SourceType::Docx => "docx",
@@ -195,6 +223,7 @@ impl SourceType {
     }
 }
 
+/// 项目整体状态。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectStatus {
@@ -205,6 +234,7 @@ pub enum ProjectStatus {
     Failed,
 }
 
+/// block 类型。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockType {
@@ -213,6 +243,7 @@ pub enum BlockType {
     TableCell,
 }
 
+/// 任务或 block 的执行状态。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofreadingStatus {
@@ -222,6 +253,7 @@ pub enum ProofreadingStatus {
     Failed,
 }
 
+/// 校对模式。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProofreadingMode {
@@ -230,6 +262,7 @@ pub enum ProofreadingMode {
     Selection,
 }
 
+/// 问题类别。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueType {
@@ -241,6 +274,7 @@ pub enum IssueType {
     Consistency,
 }
 
+/// 问题严重程度。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueSeverity {
@@ -249,6 +283,7 @@ pub enum IssueSeverity {
     High,
 }
 
+/// 问题的人为处理状态。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueStatus {
@@ -258,6 +293,7 @@ pub enum IssueStatus {
     Resolved,
 }
 
+/// 文本格式标记。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TextMark {
@@ -269,6 +305,7 @@ pub enum TextMark {
     Subscript,
 }
 
+/// 段落对齐方式。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAlign {

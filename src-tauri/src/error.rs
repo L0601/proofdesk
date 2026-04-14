@@ -1,7 +1,13 @@
+//! 统一错误模型。
+//!
+//! 后端内部会遇到 IO、数据库、JSON、网络等多类错误。
+//! 这里把它们统一收敛成 `AppError`，便于前端稳定处理。
+
 use std::fmt::{Display, Formatter};
 
 use serde::Serialize;
 
+/// 项目里的统一结果类型。
 pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, Serialize)]
@@ -13,11 +19,14 @@ pub struct ErrorPayload {
 
 #[derive(Debug)]
 pub struct AppError {
+    /// 机器可读的错误码，前端适合按它做分支。
     pub code: &'static str,
+    /// 面向人的错误信息，可直接提示给用户。
     pub message: String,
 }
 
 impl AppError {
+    /// 快速创建一条统一格式的业务错误。
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -39,6 +48,8 @@ impl Serialize for AppError {
     where
         S: serde::Serializer,
     {
+        // Tauri 在把错误返回给前端时会走序列化。
+        // 这里显式转成固定结构，避免直接暴露复杂错误对象。
         ErrorPayload {
             code: self.code.to_string(),
             message: self.message.clone(),

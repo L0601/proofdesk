@@ -1,3 +1,11 @@
+//! 本地调试工具。
+//!
+//! 这个模块不经过桌面 UI，而是给命令行排查问题用：
+//! - 查看数据库路径
+//! - 列出项目
+//! - 查看 block
+//! - 直接测试某个 block 的模型调用
+
 use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -11,6 +19,7 @@ use crate::repository::{
 use crate::services::proofread_service::debug_call_text;
 use crate::types::IssueType;
 
+/// 解析 probe 子命令并执行。
 pub async fn run_probe(args: &[String]) -> AppResult<()> {
     match parse_command(args)? {
         ProbeCommand::PrintDbPath => {
@@ -53,6 +62,7 @@ pub async fn run_probe(args: &[String]) -> AppResult<()> {
     }
 }
 
+/// 不经过 job 调度器，直接挑一个 block 调模型。
 async fn call_block(
     db_path: PathBuf,
     project_id: &str,
@@ -105,6 +115,7 @@ async fn call_block(
     Ok(())
 }
 
+/// 允许通过 block_id 或 block_index 选中一个段落。
 fn select_block(
     blocks: &[crate::types::DocumentBlock],
     block_id: Option<&str>,
@@ -137,6 +148,7 @@ fn select_block(
     ))
 }
 
+/// 默认数据库路径，与主程序保持一致。
 fn default_db_path() -> PathBuf {
     let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home)
@@ -146,6 +158,7 @@ fn default_db_path() -> PathBuf {
         .join("proofdesk.sqlite3")
 }
 
+/// 打印列表时把长文本压成单行预览。
 fn truncate_line(text: &str, max_chars: usize) -> String {
     let single_line = text.replace('\n', " ");
     let truncated = single_line.chars().take(max_chars).collect::<String>();
@@ -156,6 +169,7 @@ fn truncate_line(text: &str, max_chars: usize) -> String {
     }
 }
 
+/// probe 支持的命令集合。
 enum ProbeCommand {
     PrintDbPath,
     ListProjects { db_path: PathBuf },
@@ -168,6 +182,7 @@ enum ProbeCommand {
     },
 }
 
+/// 解析命令行参数。
 fn parse_command(args: &[String]) -> AppResult<ProbeCommand> {
     let Some(command) = args.first().map(String::as_str) else {
         return Err(usage_error());
@@ -211,12 +226,14 @@ fn parse_command(args: &[String]) -> AppResult<ProbeCommand> {
     }
 }
 
+/// 读取 `--key value` 形式的简单选项。
 fn read_option(args: &[String], key: &str) -> Option<String> {
     args.windows(2)
         .find(|window| window[0] == key)
         .map(|window| window[1].clone())
 }
 
+/// 输出命令行用法说明。
 fn usage_error() -> AppError {
     AppError::new(
         "invalid_args",

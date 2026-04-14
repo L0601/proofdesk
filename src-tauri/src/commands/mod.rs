@@ -1,3 +1,8 @@
+//! Tauri command 层。
+//!
+//! 可以把它理解成前端调用后端的入口层：
+//! 前端通过 `invoke` 调到这里，再由这里转发到 repository/service。
+
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -20,6 +25,7 @@ pub struct HealthCheck {
 
 #[tauri::command]
 pub fn ping() -> HealthCheck {
+    // 最基础的健康检查，用来确认前后端桥接是否可用。
     HealthCheck {
         name: "ProofDesk".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -46,6 +52,7 @@ pub async fn delete_project(
     state: State<'_, AppState>,
     project_id: String,
 ) -> AppResult<()> {
+    // 删除前先确认后台没有任务在跑，避免数据库和任务互相打架。
     if state.is_project_active(&project_id).await {
         return Err(crate::error::AppError::new(
             "project_processing",
@@ -68,6 +75,7 @@ pub fn import_document(
     ImportService::new(state.db.clone()).import_document(&app, &file_path)
 }
 
+/// PDF 链路会先由前端解析，再把标准化 JSON 发给后端落库。
 #[tauri::command]
 pub fn import_normalized_document(
     app: tauri::AppHandle,
@@ -104,10 +112,12 @@ pub async fn start_proofreading(
     project_id: String,
     options: ProofreadOptions,
 ) -> AppResult<ProofreadingJob> {
+    // 第一层保护：数据库里如果已经存在 running job，直接复用。
     if let Some(job) = state.proofreading_repository().get_running_job(&project_id)? {
         return Ok(job);
     }
 
+    // 第二层保护：如果内存状态显示该项目正在执行，也直接返回最近的 job。
     if state.is_project_active(&project_id).await {
         if let Some(job) = state.proofreading_repository().get_latest_job(&project_id)? {
             return Ok(job);
@@ -119,6 +129,7 @@ pub async fn start_proofreading(
     Ok(job)
 }
 
+/// 下面这些命令都是纯读取，不会触发新的模型调用。
 #[tauri::command]
 pub fn get_latest_proofreading_job(
     state: State<'_, AppState>,

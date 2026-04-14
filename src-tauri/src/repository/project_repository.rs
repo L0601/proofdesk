@@ -1,3 +1,7 @@
+//! 项目仓储。
+//!
+//! 负责 `projects` 主表，以及删除项目时相关数据的清理。
+
 use std::fs;
 use std::path::Path;
 
@@ -55,6 +59,7 @@ impl ProjectRepository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// 读取单个项目详情。
     pub fn get(&self, project_id: &str) -> AppResult<Option<crate::types::ProjectDetail>> {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(
@@ -100,6 +105,9 @@ impl ProjectRepository {
         Ok(None)
     }
 
+    /// 回写项目级聚合进度。
+    ///
+    /// 这里写的是项目总览上显示的 completed/failed 数字。
     pub fn update_progress(
         &self,
         project_id: &str,
@@ -129,6 +137,10 @@ impl ProjectRepository {
         Ok(())
     }
 
+    /// 删除一个项目在数据库里的全部关联数据。
+    ///
+    /// 这里显式按顺序删除，而不是依赖数据库级联外键，
+    /// 方便以后排查和定制删除逻辑。
     pub fn delete(&self, project_id: &str) -> AppResult<()> {
         let mut conn = self.db.connect()?;
         let tx = conn.transaction()?;
@@ -155,6 +167,7 @@ impl ProjectRepository {
         Ok(())
     }
 
+    /// 删除项目目录下的原文、标准化文档、导出物等文件。
     pub fn delete_project_dir(&self, project_root: &Path) -> AppResult<()> {
         if project_root.exists() {
             fs::remove_dir_all(project_root)?;
@@ -163,6 +176,7 @@ impl ProjectRepository {
     }
 }
 
+/// 下面这些小函数负责数据库字符串和枚举之间的转换。
 fn parse_source_type(value: &str) -> crate::types::SourceType {
     match value {
         "pdf" => crate::types::SourceType::Pdf,

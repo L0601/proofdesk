@@ -1,3 +1,8 @@
+//! 应用设置仓储。
+//!
+//! 当前策略是把整份 `AppSettings` 序列化成 JSON，
+//! 存到 `app_settings` 表的一条记录里。
+
 use crate::db::Database;
 use crate::error::AppResult;
 use crate::types::AppSettings;
@@ -21,6 +26,7 @@ impl AppSettingsRepository {
 
         if let Some(row) = rows.next()? {
             let value: String = row.get(0)?;
+            // 配置统一按 JSON 读回，便于后续扩字段时少改表结构。
             return Ok(serde_json::from_str(&value)?);
         }
 
@@ -46,6 +52,7 @@ impl AppSettingsRepository {
     }
 }
 
+/// 第一次运行时的默认设置。
 fn default_settings() -> AppSettings {
     AppSettings {
         base_url: "https://api.openai.com/v1".to_string(),

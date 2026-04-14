@@ -1,3 +1,8 @@
+//! 文档导入服务。
+//!
+//! 这里负责把源文件转成统一的标准化结构，
+//! 再把项目信息和 block 明细写入数据库。
+
 use std::fs;
 use std::fs::File;
 use std::io::Read;
@@ -28,6 +33,11 @@ impl ImportService {
         Self { db }
     }
 
+    /// 直接导入原始文件。
+    ///
+    /// 当前规则：
+    /// - DOCX 由后端解析
+    /// - PDF 必须先在前端提取文本，再调用 `import_normalized_document`
     pub fn import_document(&self, app: &AppHandle, file_path: &str) -> AppResult<ProjectSummary> {
         let source_path = PathBuf::from(file_path);
         validate_source_path(&source_path)?;
@@ -41,6 +51,8 @@ impl ImportService {
         }
     }
 
+    /// 导入前端已经标准化好的文档。
+    /// 这主要服务于 PDF 导入链路。
     pub fn import_normalized_document(
         &self,
         app: &AppHandle,
@@ -81,6 +93,8 @@ impl ImportService {
         Ok(summary)
     }
 
+    /// DOCX 的完整导入路径：
+    /// 复制原文件 -> 解析 XML -> 写标准化文档 -> 落库。
     fn import_docx(&self, app: &AppHandle, source_path: &Path) -> AppResult<ProjectSummary> {
         let project_id = Uuid::new_v4().to_string();
         let now = now_rfc3339()?;
@@ -103,6 +117,7 @@ impl ImportService {
     }
 }
 
+/// 导入前的基础文件校验。
 fn validate_source_path(path: &Path) -> AppResult<()> {
     if !path.exists() {
         return Err(AppError::new("file_not_found", "指定文件不存在"));
@@ -115,6 +130,7 @@ fn validate_source_path(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// 仅根据扩展名判断文件类型。
 fn detect_source_type(path: &Path) -> AppResult<SourceType> {
     match extension(path)?.as_str() {
         "docx" => Ok(SourceType::Docx),
@@ -123,6 +139,7 @@ fn detect_source_type(path: &Path) -> AppResult<SourceType> {
     }
 }
 
+/// 读取并规范化扩展名。
 fn extension(path: &Path) -> AppResult<String> {
     path.extension()
         .and_then(|value| value.to_str())
@@ -130,6 +147,7 @@ fn extension(path: &Path) -> AppResult<String> {
         .ok_or_else(|| AppError::new("missing_extension", "文件缺少扩展名"))
 }
 
+/// 每个项目都有一个独立工作目录。
 fn project_root(app: &AppHandle, project_id: &str) -> AppResult<PathBuf> {
     let root = app.path().app_data_dir()?.join("projects").join(project_id);
     fs::create_dir_all(root.join("original"))?;
@@ -139,6 +157,7 @@ fn project_root(app: &AppHandle, project_id: &str) -> AppResult<PathBuf> {
     Ok(root)
 }
 
+/// 把原始文件复制进项目目录，避免依赖用户外部路径长期稳定存在。
 fn copy_original_file(
     source_path: &Path,
     project_dir: &Path,
@@ -152,6 +171,7 @@ fn copy_original_file(
     Ok(target)
 }
 
+/// 把标准化文档写成 JSON 文件，方便前端和调试工具复用。
 fn write_normalized_doc(project_dir: &Path, document: &NormalizedDocument) -> AppResult<PathBuf> {
     let path = project_dir.join("normalized").join("document.json");
     let content = serde_json::to_string_pretty(document)?;
@@ -159,6 +179,7 @@ fn write_normalized_doc(project_dir: &Path, document: &NormalizedDocument) -> Ap
     Ok(path)
 }
 
+/// 构造项目摘要对象。
 fn build_project_summary(
     project_id: &str,
     project_name: &str,
@@ -181,6 +202,7 @@ fn build_project_summary(
     }
 }
 
+/// 用事务把项目主记录和全部 block 一次性写入数据库。
 fn persist_project(
     db: &Database,
     summary: &ProjectSummary,
@@ -242,6 +264,8 @@ fn persist_project(
     Ok(())
 }
 
+/// 解析 DOCX 的核心逻辑：
+/// 从压缩包里取出 `word/document.xml`，再按 XML 流构建 block。
 fn parse_docx(project_id: &str, source_path: &Path) -> AppResult<NormalizedDocument> {
     let file = File::open(source_path)?;
     let mut archive = ZipArchive::new(file)?;
@@ -289,6 +313,7 @@ fn parse_docx(project_id: &str, source_path: &Path) -> AppResult<NormalizedDocum
     })
 }
 
+/// 处理 XML 起始标签。
 fn handle_start(
     event: &BytesStart<'_>,
     paragraph: &mut ParagraphBuilder,
@@ -312,6 +337,7 @@ fn handle_start(
     Ok(())
 }
 
+/// 处理 XML 自闭合标签，比如 `<w:tab/>`。
 fn handle_empty(
     event: &BytesStart<'_>,
     paragraph: &mut ParagraphBuilder,
@@ -327,6 +353,7 @@ fn handle_empty(
     Ok(())
 }
 
+/// 处理 XML 结束标签。
 fn handle_end(
     name: &[u8],
     paragraph: &mut ParagraphBuilder,
@@ -348,16 +375,19 @@ fn handle_end(
     Ok(())
 }
 
+/// 避免同一个样式标记被重复压入。
 fn push_mark(marks: &mut Vec<TextMark>, mark: TextMark) {
     if !marks.contains(&mark) {
         marks.push(mark);
     }
 }
 
+/// 去掉 XML 命名空间前缀，只保留本地标签名。
 fn local_name(name: &[u8]) -> &[u8] {
     name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
 }
 
+/// 从文件名推导项目名。
 fn file_stem(path: &Path) -> AppResult<String> {
     path.file_stem()
         .and_then(|value| value.to_str())
@@ -365,6 +395,7 @@ fn file_stem(path: &Path) -> AppResult<String> {
         .ok_or_else(|| AppError::new("invalid_file_name", "无法解析项目名称"))
 }
 
+/// 项目统一使用 RFC3339 时间字符串，便于前后端直接传输。
 pub fn now_rfc3339() -> AppResult<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -396,6 +427,8 @@ fn block_type_name(block_type: BlockType) -> &'static str {
     }
 }
 
+/// 一个流式 DOCX 段落构建器。
+/// 可以把它理解成“按 XML 事件逐步积累当前段状态”的小状态机。
 struct ParagraphBuilder {
     index: i64,
     block_type: BlockType,
@@ -413,12 +446,14 @@ impl ParagraphBuilder {
         }
     }
 
+    /// 遇到新段落时重置内部状态。
     fn start_next(&mut self) {
         self.runs.clear();
         self.block_type = BlockType::Paragraph;
         self.in_text = false;
     }
 
+    /// 根据段落样式判断是否应视为标题。
     fn capture_style(&mut self, event: &BytesStart<'_>) -> AppResult<()> {
         let style = attr_value(event, b"val")?.unwrap_or_default().to_ascii_lowercase();
         if style.starts_with("heading") {
@@ -427,6 +462,7 @@ impl ParagraphBuilder {
         Ok(())
     }
 
+    /// 处理上下标标记。
     fn capture_vert_align(
         &mut self,
         event: &BytesStart<'_>,
@@ -440,9 +476,12 @@ impl ParagraphBuilder {
         Ok(())
     }
 
+    /// 收集一个 run 的文本与样式。
     fn push_text(&mut self, text: String, marks: Vec<TextMark>) {
         self.runs.push(BlockRun { text, marks });
     }
+
+    /// 把当前积累的段落状态组装成一个标准化 block。
     fn build(&self) -> AppResult<NormalizedBlock> {
         let block_id = format!("blk_{:06}", self.index + 1);
         let text = self.runs.iter().map(|item| item.text.as_str()).collect();
@@ -470,6 +509,7 @@ impl ParagraphBuilder {
         })
     }
 
+    /// 计算当前段落的 run 索引范围。
     fn run_range(&self) -> Option<(i64, i64)> {
         if self.runs.is_empty() {
             None
@@ -478,6 +518,7 @@ impl ParagraphBuilder {
         }
     }
 
+    /// 段落结束后推进索引。
     fn advance(&mut self) {
         self.index += 1;
         self.start_next();
@@ -490,6 +531,7 @@ impl Default for ParagraphBuilder {
     }
 }
 
+/// 从 XML 标签属性中读取指定键值。
 fn attr_value(event: &BytesStart<'_>, expected: &[u8]) -> AppResult<Option<String>> {
     for attr in event.attributes().flatten() {
         if local_name(attr.key.as_ref()) == expected {
