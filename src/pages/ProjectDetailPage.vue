@@ -111,18 +111,22 @@
             v-if="issuePanelOpen"
             class="side-panel__body"
           >
-          <div class="stats-grid">
-            <article class="metric-tile">
+          <div class="stats-inline">
+            <article class="stats-inline__item">
+              <span>总块数</span>
+              <strong>{{ jobMetrics.total }}</strong>
+            </article>
+            <article class="stats-inline__item">
+              <span>已完成</span>
+              <strong>{{ jobMetrics.completed }}</strong>
+            </article>
+            <article class="stats-inline__item">
+              <span>失败</span>
+              <strong>{{ jobMetrics.failed }}</strong>
+            </article>
+            <article class="stats-inline__item">
               <span>当前页</span>
               <strong>{{ currentPageLabel }}</strong>
-            </article>
-            <article class="metric-tile">
-              <span>本页问题</span>
-              <strong>{{ visibleIssues.length }}</strong>
-            </article>
-            <article class="metric-tile">
-              <span>本页调用</span>
-              <strong>{{ visibleCalls.length }}</strong>
             </article>
           </div>
 
@@ -296,6 +300,11 @@ const visibleCalls = computed(() =>
 const currentPageLabel = computed(() =>
   totalPages.value > 1 ? `${currentPage.value} / ${totalPages.value}` : "1",
 );
+const jobMetrics = computed(() => ({
+  total: job.value?.totalBlocks ?? projectDetail.value?.totalBlocks ?? 0,
+  completed: job.value?.completedBlocks ?? projectDetail.value?.completedBlocks ?? 0,
+  failed: job.value?.failedBlocks ?? projectDetail.value?.failedBlocks ?? 0,
+}));
 const jobRunning = computed(() => job.value?.status === "running");
 let pollingTimer: number | null = null;
 
@@ -319,7 +328,7 @@ onMounted(() => {
     if (jobRunning.value) {
       void refreshProofreadingData();
     }
-  }, 2000);
+  }, 5000);
 });
 
 onBeforeUnmount(() => {

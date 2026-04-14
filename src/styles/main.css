@@ -191,6 +191,34 @@ input {
   grid-template-columns: repeat(3, minmax(120px, 1fr));
 }
 
+.stats-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stats-inline__item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(154, 52, 18, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 252, 247, 0.86);
+}
+
+.stats-inline__item span {
+  color: var(--text-subtle);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.stats-inline__item strong {
+  color: var(--text-main);
+  font-size: 18px;
+  line-height: 1;
+}
+
 .info-card {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);

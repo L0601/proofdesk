@@ -33,6 +33,8 @@ pub struct NewCallRecord {
 
 #[derive(Debug, Clone, Copy)]
 pub struct JobMetrics {
+    pub pending_blocks: i64,
+    pub running_blocks: i64,
     pub completed_blocks: i64,
     pub failed_blocks: i64,
     pub total_issues: i64,
@@ -91,6 +93,25 @@ impl ProofreadingRepository {
         )?;
         let rows = stmt.query_map([], map_job_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_running_job(&self, project_id: &str) -> AppResult<Option<ProofreadingJob>> {
+        let conn = self.db.connect()?;
+        conn.query_row(
+            r#"
+            SELECT id, project_id, mode, status, options_json, auto_resume, started_at, finished_at,
+                   total_blocks, completed_blocks, failed_blocks, total_issues, total_tokens_in,
+                   total_tokens_out, total_latency_ms
+            FROM proofreading_jobs
+            WHERE project_id = ?1 AND status = 'running'
+            ORDER BY started_at DESC
+            LIMIT 1
+            "#,
+            [project_id],
+            map_job_row,
+        )
+        .optional()
+        .map_err(Into::into)
     }
 
     pub fn update_job(&self, job: &ProofreadingJob) -> AppResult<()> {
@@ -260,23 +281,32 @@ impl ProofreadingRepository {
         let base = conn.query_row(
             r#"
             SELECT
+              COALESCE(SUM(CASE WHEN proofreading_status = 'pending' THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN proofreading_status = 'running' THEN 1 ELSE 0 END), 0),
               COALESCE(SUM(CASE WHEN status IN ('completed', 'skipped') THEN 1 ELSE 0 END), 0),
               COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
               COALESCE(SUM(prompt_tokens), 0),
               COALESCE(SUM(completion_tokens), 0),
               COALESCE(SUM(latency_ms), 0)
-            FROM proofreading_calls
-            WHERE job_id = ?1
+            FROM document_blocks
+            LEFT JOIN proofreading_calls
+              ON proofreading_calls.block_id = document_blocks.id
+             AND proofreading_calls.job_id = ?1
+            WHERE document_blocks.project_id = (
+              SELECT project_id FROM proofreading_jobs WHERE id = ?1
+            )
             "#,
             [job_id],
             |row| {
                 Ok(JobMetrics {
-                    completed_blocks: row.get(0)?,
-                    failed_blocks: row.get(1)?,
+                    pending_blocks: row.get(0)?,
+                    running_blocks: row.get(1)?,
+                    completed_blocks: row.get(2)?,
+                    failed_blocks: row.get(3)?,
                     total_issues: 0,
-                    total_tokens_in: row.get(2)?,
-                    total_tokens_out: row.get(3)?,
-                    total_latency_ms: row.get(4)?,
+                    total_tokens_in: row.get(4)?,
+                    total_tokens_out: row.get(5)?,
+                    total_latency_ms: row.get(6)?,
                 })
             },
         )?;

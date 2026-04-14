@@ -112,6 +112,9 @@ impl ProofreadService {
     ) -> AppResult<ProofreadingJob> {
         let repo = ProofreadingRepository::new(self.db.clone());
         let project_repo = ProjectRepository::new(self.db.clone());
+        if let Some(job) = repo.get_running_job(project_id)? {
+            return Ok(job);
+        }
         let blocks = select_blocks(&repo.list_blocks(project_id)?, options.mode)?;
         if blocks.is_empty() {
             return Err(AppError::new("empty_document", "当前项目没有可校对的正文块"));
@@ -185,7 +188,9 @@ impl ProofreadService {
         }
 
         for handle in handles {
-            let _ = handle.await;
+            handle.await.map_err(|error| {
+                AppError::new("proofread_worker_join_error", error.to_string())
+            })?;
         }
 
         let finished_at = crate::services::import_service::now_rfc3339()?;
@@ -563,7 +568,10 @@ fn apply_metrics(job: &mut ProofreadingJob, metrics: JobMetrics, finished_at: &s
     job.total_tokens_in = metrics.total_tokens_in;
     job.total_tokens_out = metrics.total_tokens_out;
     job.total_latency_ms = metrics.total_latency_ms;
-    job.status = if metrics.failed_blocks > 0 && metrics.completed_blocks == 0 {
+    let has_unfinished = metrics.pending_blocks > 0 || metrics.running_blocks > 0;
+    job.status = if has_unfinished {
+        ProofreadingStatus::Failed
+    } else if metrics.failed_blocks > 0 && metrics.completed_blocks == 0 {
         ProofreadingStatus::Failed
     } else {
         ProofreadingStatus::Completed
@@ -817,8 +825,9 @@ fn parse_severity(value: &str) -> IssueSeverity {
 fn text_prefix(text: &str, start_offset: i64) -> Option<String> {
     let start = start_offset.max(0) as usize;
     let chars = text.chars().collect::<Vec<_>>();
-    let from = start.saturating_sub(8);
-    let prefix = chars[from..start.min(chars.len())].iter().collect::<String>();
+    let end = start.min(chars.len());
+    let from = end.saturating_sub(8);
+    let prefix = chars[from..end].iter().collect::<String>();
     if prefix.is_empty() { None } else { Some(prefix) }
 }
 
@@ -856,6 +865,7 @@ mod tests {
             model: "gpt-4.1-mini".to_string(),
             timeout_ms: 60_000,
             max_concurrency: 4,
+            pdf_min_block_chars: 16,
             temperature: 0.2,
             max_tokens: 1200,
             system_prompt_template: "test".to_string(),
@@ -872,6 +882,7 @@ mod tests {
             model: "gpt-4.1-mini".to_string(),
             timeout_ms: 60_000,
             max_concurrency: 4,
+            pdf_min_block_chars: 16,
             temperature: 0.2,
             max_tokens: 1200,
             system_prompt_template: "test".to_string(),

@@ -104,6 +104,10 @@ pub async fn start_proofreading(
     project_id: String,
     options: ProofreadOptions,
 ) -> AppResult<ProofreadingJob> {
+    if let Some(job) = state.proofreading_repository().get_running_job(&project_id)? {
+        return Ok(job);
+    }
+
     if state.is_project_active(&project_id).await {
         if let Some(job) = state.proofreading_repository().get_latest_job(&project_id)? {
             return Ok(job);
