@@ -97,6 +97,20 @@
           title="问题面板"
           subtitle="只显示校对视图当前页的问题与统计。"
         >
+          <template #extra>
+            <button
+              class="panel-toggle"
+              type="button"
+              @click="issuePanelOpen = !issuePanelOpen"
+            >
+              {{ issuePanelOpen ? "收起" : "展开" }}
+            </button>
+          </template>
+
+          <div
+            v-if="issuePanelOpen"
+            class="side-panel__body"
+          >
           <div class="stats-grid">
             <article class="metric-tile">
               <span>当前页</span>
@@ -153,12 +167,27 @@
               </div>
             </div>
           </div>
+          </div>
         </InfoCard>
 
         <InfoCard
           title="调用日志"
           subtitle="只显示当前页 block 的模型调用状态、耗时与错误信息。"
         >
+          <template #extra>
+            <button
+              class="panel-toggle"
+              type="button"
+              @click="callPanelOpen = !callPanelOpen"
+            >
+              {{ callPanelOpen ? "收起" : "展开" }}
+            </button>
+          </template>
+
+          <div
+            v-if="callPanelOpen"
+            class="side-panel__body"
+          >
           <div
             v-if="visibleCalls.length"
             class="call-list"
@@ -199,6 +228,7 @@
                 <p>翻页后面板会自动刷新；执行校对后，这里会展示当前页对应 block 的调用结果。</p>
               </div>
             </div>
+          </div>
           </div>
         </InfoCard>
       </div>
@@ -250,6 +280,8 @@ const calls = ref<ProofreadingCall[]>([]);
 const currentPage = ref(1);
 const totalPages = ref(1);
 const visibleBlockIds = ref<string[]>([]);
+const issuePanelOpen = ref(true);
+const callPanelOpen = ref(false);
 
 const projectId = computed(() => String(route.params.id ?? ""));
 const projectTitle = computed(() => projectDetail.value?.name ?? projectId.value);
@@ -282,10 +314,10 @@ const defaultOptions: ProofreadOptions = {
 };
 
 onMounted(() => {
-  void loadPage();
+  void loadInitialData();
   pollingTimer = window.setInterval(() => {
     if (jobRunning.value) {
-      void loadPage();
+      void refreshProofreadingData();
     }
   }, 2000);
 });
@@ -297,8 +329,9 @@ onBeforeUnmount(() => {
   }
 });
 
-async function loadPage() {
-  await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
+async function loadInitialData() {
+  await loadProjectDetail();
+  await refreshProofreadingData();
 }
 
 async function loadProjectDetail() {
@@ -444,7 +477,7 @@ async function executeProofreading(
   successMessage: string,
 ) {
   job.value = await startProofreading(projectId.value, options);
-  await Promise.all([loadProjectDetail(), refreshProofreadingData()]);
+  await refreshProofreadingData();
   panelMessage.value = successMessage;
   activeView.value = "proofread";
   if (issues.value.length) {

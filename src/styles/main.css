@@ -313,10 +313,25 @@ input {
 .stats-grid,
 .issue-list,
 .call-list,
-.side-panel {
+.side-panel,
+.side-panel__body {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+.panel-toggle {
+  padding: 8px 14px;
+  border: 1px solid rgba(154, 52, 18, 0.12);
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  cursor: pointer;
+}
+
+.panel-toggle:hover {
+  border-color: rgba(154, 52, 18, 0.22);
+  background: rgba(154, 52, 18, 0.14);
 }
 
 .issue-card {
