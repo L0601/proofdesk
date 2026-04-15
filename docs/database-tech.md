@@ -266,3 +266,9 @@
 - 按日期共享的 AI 日志文件
 
 如果项目当前处于后台处理中，前后端都会拒绝删除。
+
+## app setting
+```
+INSERT INTO app_settings ("key",value) VALUES
+	 ('proofread_settings','{"baseUrl":"http://192.168.31.30:1234/v1","apiKey":"","model":"gemma-4-e4b-uncensored-hauhaucs-aggressive","timeoutMs":60000,"maxConcurrency":1,"pdfMinBlockChars":16,"temperature":0.1,"maxTokens":1200,"systemPromptTemplate":"你是一名中文文稿校对助手。请严格输出结构化 JSON，只返回明确存在的问题。"}');
+```
