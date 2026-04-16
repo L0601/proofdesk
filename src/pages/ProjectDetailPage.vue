@@ -314,7 +314,6 @@ const defaultOptions: ProofreadOptions = {
   overlapChars: 80,
   issueTypes: [
     "typo",
-    "punctuation",
     "grammar",
     "wording",
     "redundancy",

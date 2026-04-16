@@ -290,9 +290,10 @@ impl WorkerContext {
         repo.update_block_status(&block.id, ProofreadingStatus::Running, &started_at)?;
 
         let timer = Instant::now();
+        let sanitized_text = sanitize_model_input(&block.text_content);
         let payload = RequestPayload {
             block_id: &block.id,
-            text: &block.text_content,
+            text: &sanitized_text,
             rules: build_rules(&self.issue_types),
         };
         let request_body = build_model_request_body(&self.settings, &payload)?;
@@ -824,6 +825,8 @@ fn build_rules(issue_types: &[IssueType]) -> Vec<String> {
         "只找校对问题，不改写整体风格".to_string(),
         "若无问题，返回 {\"issues\":[]}".to_string(),
         format!("重点检查：{}", labels),
+        "忽略标点问题、PDF 换行、分页断行、分隔线、空白字符导致的版式噪音".to_string(),
+        "不要把“于\\n是”“一\\n种”“句号后换行”这类提取断行当作问题".to_string(),
         "每项必须返回 type、severity、start_offset、end_offset、quote、suggestion、explanation".to_string(),
     ]
 }
@@ -878,6 +881,49 @@ fn should_proofread_block(block: &crate::types::DocumentBlock, skip_until_page: 
         Some(page) => page >= skip_until_page,
         None => true,
     }
+}
+
+/// 对送给模型的文本做轻量清洗，但尽量保持字符串长度不变，
+/// 这样模型返回的 offset 仍可映射回原文高亮。
+fn sanitize_model_input(text: &str) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(text.len());
+
+    for (index, current) in chars.iter().enumerate() {
+        let previous = if index > 0 { Some(chars[index - 1]) } else { None };
+        let next = chars.get(index + 1).copied();
+        let cleaned = if *current == '\n' && is_inline_line_break(previous, next) {
+            ' '
+        } else if is_separator_char(*current) {
+            ' '
+        } else {
+            *current
+        };
+        output.push(cleaned);
+    }
+
+    output
+}
+
+fn is_inline_line_break(previous: Option<char>, next: Option<char>) -> bool {
+    match (previous, next) {
+        (Some(left), Some(right)) => is_cjk_or_word(left) && is_cjk_or_word(right),
+        _ => false,
+    }
+}
+
+fn is_cjk_or_word(value: char) -> bool {
+    value.is_ascii_alphanumeric() || is_cjk(value)
+}
+
+fn is_cjk(value: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&value)
+        || ('\u{3400}'..='\u{4DBF}').contains(&value)
+        || ('\u{F900}'..='\u{FAFF}').contains(&value)
+}
+
+fn is_separator_char(value: char) -> bool {
+    matches!(value, '-' | '—' | '－' | '_' | '─' | '━')
 }
 
 /// 判断是否具备真实调模型的最低条件。
