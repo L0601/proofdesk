@@ -433,12 +433,29 @@ impl ProofreadingRepository {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, project_id, job_id, block_id, issue_type, severity, start_offset, end_offset,
-                   quote_text, prefix_text, suffix_text, suggestion, explanation,
-                   normalized_replacement, status, created_at
+            SELECT proofreading_issues.id,
+                   proofreading_issues.project_id,
+                   proofreading_issues.job_id,
+                   proofreading_issues.block_id,
+                   proofreading_issues.issue_type,
+                   proofreading_issues.severity,
+                   proofreading_issues.start_offset,
+                   proofreading_issues.end_offset,
+                   proofreading_issues.quote_text,
+                   proofreading_issues.prefix_text,
+                   proofreading_issues.suffix_text,
+                   proofreading_issues.suggestion,
+                   proofreading_issues.explanation,
+                   proofreading_issues.normalized_replacement,
+                   proofreading_issues.status,
+                   proofreading_issues.created_at
             FROM proofreading_issues
-            WHERE project_id = ?1
-            ORDER BY created_at DESC
+            INNER JOIN document_blocks
+              ON document_blocks.id = proofreading_issues.block_id
+            WHERE proofreading_issues.project_id = ?1
+            ORDER BY document_blocks.block_index ASC,
+                     proofreading_issues.start_offset ASC,
+                     proofreading_issues.created_at ASC
             "#,
         )?;
 

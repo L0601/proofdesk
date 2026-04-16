@@ -85,18 +85,8 @@ function buildBlockContent(
   issues: ProofreadingIssue[],
 ): TiptapTextNode[] {
   const issueRanges = issues
-    .map((issue) => ({
-      start: issue.startOffset,
-      end: issue.endOffset,
-      mark: {
-        type: "issueMark" as const,
-        attrs: {
-          issueId: issue.id,
-          issueType: issue.issueType,
-          severity: issue.severity,
-        },
-      },
-    }))
+    .map((issue) => toIssueRange(block, issue))
+    .filter((issue): issue is NonNullable<typeof issue> => Boolean(issue))
     .sort((left, right) => left.start - right.start);
 
   const nodes: TiptapTextNode[] = [];
@@ -134,6 +124,71 @@ function buildBlockContent(
   }
 
   return nodes.length ? nodes : [{ type: "text", text: "" }];
+}
+
+function toIssueRange(block: NormalizedBlock, issue: ProofreadingIssue) {
+  const range = resolveIssueRange(block.text, issue);
+  if (!range) {
+    return null;
+  }
+
+  return {
+    start: range.start,
+    end: range.end,
+    mark: {
+      type: "issueMark" as const,
+      attrs: {
+        issueId: issue.id,
+        issueType: issue.issueType,
+        severity: issue.severity,
+      },
+    },
+  };
+}
+
+function resolveIssueRange(blockText: string, issue: ProofreadingIssue) {
+  const start = clampOffset(issue.startOffset, blockText.length);
+  const end = clampOffset(issue.endOffset, blockText.length);
+  const quote = issue.quoteText.trim();
+
+  if (!quote) {
+    return start < end ? { start, end } : null;
+  }
+
+  if (start < end && blockText.slice(start, end) === quote) {
+    return { start, end };
+  }
+
+  const fallbackStart = findNearestQuote(blockText, quote, start);
+  if (fallbackStart < 0) {
+    return start < end ? { start, end } : null;
+  }
+
+  return {
+    start: fallbackStart,
+    end: fallbackStart + quote.length,
+  };
+}
+
+function findNearestQuote(text: string, quote: string, expectedStart: number) {
+  let cursor = text.indexOf(quote);
+  let bestStart = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  while (cursor >= 0) {
+    const distance = Math.abs(cursor - expectedStart);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestStart = cursor;
+    }
+    cursor = text.indexOf(quote, cursor + 1);
+  }
+
+  return bestStart;
+}
+
+function clampOffset(value: number, max: number) {
+  return Math.min(Math.max(value, 0), max);
 }
 
 function splitSegments(
