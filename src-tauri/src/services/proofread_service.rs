@@ -86,6 +86,11 @@ struct RequestPayload<'a> {
     rules: Vec<String>,
 }
 
+struct SanitizedText {
+    text: String,
+    char_map: Vec<usize>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DebugModelCall {
     pub request_json: String,
@@ -306,10 +311,10 @@ impl WorkerContext {
         repo.update_block_status(&block.id, ProofreadingStatus::Running, &started_at)?;
 
         let timer = Instant::now();
-        let sanitized_text = sanitize_model_input(&block.text_content);
+        let sanitized = sanitize_model_input(&block.text_content);
         let payload = RequestPayload {
             block_id: &block.id,
-            text: &sanitized_text,
+            text: &sanitized.text,
             rules: build_rules(&self.issue_types),
         };
         let request_body = build_model_request_body(&self.settings, &payload)?;
@@ -317,8 +322,16 @@ impl WorkerContext {
 
         match &self.client {
             Some(client) => {
-                self.handle_remote(&repo, &block, client, timer, started_at, request_json)
-                    .await
+                self.handle_remote(
+                    &repo,
+                    &block,
+                    &sanitized,
+                    client,
+                    timer,
+                    started_at,
+                    request_json,
+                )
+                .await
             }
             None => self.handle_skipped(&repo, &block, started_at, request_json),
         }
@@ -329,6 +342,7 @@ impl WorkerContext {
         &self,
         repo: &ProofreadingRepository,
         block: &DocumentBlock,
+        sanitized: &SanitizedText,
         client: &Client,
         timer: Instant,
         started_at: String,
@@ -355,6 +369,7 @@ impl WorkerContext {
                     &self.job_id,
                     &block.id,
                     &block.text_content,
+                    sanitized,
                     &response.message.content,
                     &finished_at,
                 ) {
@@ -793,6 +808,7 @@ fn to_proofreading_issues(
     job_id: &str,
     block_id: &str,
     text: &str,
+    sanitized: &SanitizedText,
     raw_content: &str,
     created_at: &str,
 ) -> AppResult<Vec<ProofreadingIssue>> {
@@ -800,19 +816,20 @@ fn to_proofreading_issues(
     let issues = payload
         .issues
         .into_iter()
-        .map(|issue| {
-            let prefix = text_prefix(text, issue.start_offset);
-            let suffix = text_suffix(text, issue.end_offset);
+        .filter_map(|issue| {
+            let (start_offset, end_offset) = map_issue_offsets(sanitized, text, &issue)?;
+            let prefix = text_prefix(text, start_offset);
+            let suffix = text_suffix(text, end_offset);
 
-            ProofreadingIssue {
+            Some(ProofreadingIssue {
                 id: Uuid::new_v4().to_string(),
                 project_id: project_id.to_string(),
                 job_id: job_id.to_string(),
                 block_id: block_id.to_string(),
                 issue_type: parse_issue_type(&issue.issue_type),
                 severity: parse_severity(&issue.severity),
-                start_offset: issue.start_offset,
-                end_offset: issue.end_offset,
+                start_offset,
+                end_offset,
                 quote_text: issue.quote,
                 prefix_text: prefix,
                 suffix_text: suffix,
@@ -821,11 +838,39 @@ fn to_proofreading_issues(
                 normalized_replacement: issue.normalized_replacement,
                 status: IssueStatus::Open,
                 created_at: created_at.to_string(),
-            }
+            })
         })
         .collect();
 
     Ok(issues)
+}
+
+fn map_issue_offsets(
+    sanitized: &SanitizedText,
+    original_text: &str,
+    issue: &ModelIssue,
+) -> Option<(i64, i64)> {
+    let original_len = original_text.chars().count();
+    let start = map_offset_to_original(&sanitized.char_map, issue.start_offset, original_len)?;
+    let end = map_offset_to_original(&sanitized.char_map, issue.end_offset, original_len)?;
+    if start >= end {
+        return None;
+    }
+    Some((start as i64, end as i64))
+}
+
+fn map_offset_to_original(char_map: &[usize], offset: i64, original_len: usize) -> Option<usize> {
+    let offset = offset.max(0) as usize;
+    if offset == 0 {
+        return Some(0);
+    }
+    if char_map.is_empty() {
+        return Some(original_len);
+    }
+    if offset >= char_map.len() {
+        return char_map.last().map(|index| index + 1);
+    }
+    Some(char_map[offset - 1] + 1)
 }
 
 /// 模型有时会返回带 Markdown 包裹的 JSON，这里先做一层容错解析。
@@ -934,26 +979,28 @@ fn should_proofread_block(block: &crate::types::DocumentBlock, skip_until_page: 
     }
 }
 
-/// 对送给模型的文本做轻量清洗，但尽量保持字符串长度不变，
-/// 这样模型返回的 offset 仍可映射回原文高亮。
-fn sanitize_model_input(text: &str) -> String {
+/// 对送给模型的文本做轻量清洗，并记录清洗后字符到原文字符的映射。
+fn sanitize_model_input(text: &str) -> SanitizedText {
     let chars = text.chars().collect::<Vec<_>>();
     let mut output = String::with_capacity(text.len());
+    let mut char_map = Vec::with_capacity(chars.len());
 
     for (index, current) in chars.iter().enumerate() {
         let previous = if index > 0 { Some(chars[index - 1]) } else { None };
         let next = chars.get(index + 1).copied();
-        let cleaned = if *current == '\n' && is_inline_line_break(previous, next) {
-            ' '
-        } else if is_separator_char(*current) {
-            ' '
-        } else {
-            *current
-        };
-        output.push(cleaned);
+        if should_drop_inline_gap(*current, previous, next) || is_separator_char(*current) {
+            continue;
+        }
+        if *current == '\n' && is_inline_line_break(previous, next) {
+            output.push(' ');
+            char_map.push(index);
+            continue;
+        }
+        output.push(*current);
+        char_map.push(index);
     }
 
-    output
+    SanitizedText { text: output, char_map }
 }
 
 fn is_inline_line_break(previous: Option<char>, next: Option<char>) -> bool {
@@ -961,6 +1008,14 @@ fn is_inline_line_break(previous: Option<char>, next: Option<char>) -> bool {
         (Some(left), Some(right)) => is_cjk_or_word(left) && is_cjk_or_word(right),
         _ => false,
     }
+}
+
+fn should_drop_inline_gap(
+    current: char,
+    previous: Option<char>,
+    next: Option<char>,
+) -> bool {
+    current.is_whitespace() && matches!((previous, next), (Some(left), Some(right)) if is_cjk_or_word(left) && is_cjk_or_word(right))
 }
 
 fn is_cjk_or_word(value: char) -> bool {
