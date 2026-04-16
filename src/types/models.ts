@@ -169,6 +169,7 @@ export interface AppSettings {
   timeoutMs: number;
   maxConcurrency: number;
   pdfMinBlockChars: number;
+  proofreadSkipPages: number;
   temperature: number;
   maxTokens: number;
   systemPromptTemplate: string;

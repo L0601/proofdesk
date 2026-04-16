@@ -69,6 +69,15 @@
           />
         </label>
         <label class="field">
+          <span>Proofread Skip Pages</span>
+          <input
+            v-model.number="form.proofreadSkipPages"
+            type="number"
+            min="0"
+            max="500"
+          />
+        </label>
+        <label class="field">
           <span>Temperature</span>
           <input
             v-model.number="form.temperature"
@@ -130,6 +139,7 @@ const form = reactive<AppSettings>({
   timeoutMs: 60000,
   maxConcurrency: 4,
   pdfMinBlockChars: 16,
+  proofreadSkipPages: 0,
   temperature: 0.2,
   maxTokens: 1200,
   systemPromptTemplate: "",
@@ -171,6 +181,10 @@ async function handleSave() {
     form.pdfMinBlockChars = Math.min(
       200,
       Math.max(0, Math.trunc(form.pdfMinBlockChars || 0)),
+    );
+    form.proofreadSkipPages = Math.min(
+      500,
+      Math.max(0, Math.trunc(form.proofreadSkipPages || 0)),
     );
     const saved = await saveAppSettings({ ...form });
     Object.assign(form, saved);

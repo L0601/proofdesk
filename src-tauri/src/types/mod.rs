@@ -184,6 +184,8 @@ pub struct AppSettings {
     pub max_concurrency: i64,
     #[serde(default = "default_pdf_min_block_chars")]
     pub pdf_min_block_chars: i64,
+    #[serde(default)]
+    pub proofread_skip_pages: i64,
     pub temperature: f64,
     pub max_tokens: i64,
     pub system_prompt_template: String,

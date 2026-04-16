@@ -126,10 +126,15 @@ impl ProofreadService {
     ) -> AppResult<ProofreadingJob> {
         let repo = ProofreadingRepository::new(self.db.clone());
         let project_repo = ProjectRepository::new(self.db.clone());
+        let settings = AppSettingsRepository::new(self.db.clone()).get()?;
         if let Some(job) = repo.get_running_job(project_id)? {
             return Ok(job);
         }
-        let blocks = select_blocks(&repo.list_blocks(project_id)?, options.mode)?;
+        let blocks = select_blocks(
+            &repo.list_blocks(project_id)?,
+            options.mode,
+            settings.proofread_skip_pages,
+        )?;
         if blocks.is_empty() {
             return Err(AppError::new("empty_document", "当前项目没有可校对的正文块"));
         }
@@ -184,7 +189,11 @@ impl ProofreadService {
         // 恢复任务前，先把意外退出留下的 running block 回退到 pending。
         repo.reset_running_blocks(&job.project_id, &now)?;
 
-        let blocks = select_pending_blocks(&repo.list_blocks(&job.project_id)?, options.mode)?;
+        let blocks = select_pending_blocks(
+            &repo.list_blocks(&job.project_id)?,
+            options.mode,
+            settings.proofread_skip_pages,
+        )?;
         if blocks.is_empty() {
             let finished_at = crate::services::import_service::now_rfc3339()?;
             finalize_job(&repo, &project_repo, &mut job, &finished_at)?;
@@ -812,14 +821,21 @@ fn build_rules(issue_types: &[IssueType]) -> Vec<String> {
 fn select_blocks(
     blocks: &[crate::types::DocumentBlock],
     mode: ProofreadingMode,
+    skip_pages: i64,
 ) -> AppResult<Vec<crate::types::DocumentBlock>> {
+    let skip_until_page = skip_pages.max(0) + 1;
     let selected = match mode {
         ProofreadingMode::RetryFailed => blocks
             .iter()
+            .filter(|block| should_proofread_block(block, skip_until_page))
             .filter(|block| matches!(block.proofreading_status, ProofreadingStatus::Failed))
             .cloned()
             .collect::<Vec<_>>(),
-        _ => blocks.to_vec(),
+        _ => blocks
+            .iter()
+            .filter(|block| should_proofread_block(block, skip_until_page))
+            .cloned()
+            .collect::<Vec<_>>(),
     };
 
     if matches!(mode, ProofreadingMode::RetryFailed) && selected.is_empty() {
@@ -833,12 +849,24 @@ fn select_blocks(
 fn select_pending_blocks(
     blocks: &[crate::types::DocumentBlock],
     mode: ProofreadingMode,
+    skip_pages: i64,
 ) -> AppResult<Vec<crate::types::DocumentBlock>> {
-    let selected = select_blocks(blocks, mode)?;
+    let selected = select_blocks(blocks, mode, skip_pages)?;
     Ok(selected
         .into_iter()
         .filter(|block| matches!(block.proofreading_status, ProofreadingStatus::Pending))
         .collect())
+}
+
+/// 判断一个 block 是否应该进入本次校对范围。
+///
+/// `skip_until_page = 1` 表示跳过第 1 页，从第 2 页开始校对。
+/// 没有页码的 block 默认保留，避免影响 DOCX 或缺页码数据。
+fn should_proofread_block(block: &crate::types::DocumentBlock, skip_until_page: i64) -> bool {
+    match block.source_page {
+        Some(page) => page >= skip_until_page,
+        None => true,
+    }
 }
 
 /// 判断是否具备真实调模型的最低条件。
