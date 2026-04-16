@@ -323,14 +323,6 @@ impl WorkerContext {
                 let finished_at = crate::services::import_service::now_rfc3339()?;
                 let latency_ms = timer.elapsed().as_millis() as i64;
                 let response_json = serde_json::to_string(&response)?;
-                let issues = to_proofreading_issues(
-                    &self.project_id,
-                    &self.job_id,
-                    &block.id,
-                    &block.text_content,
-                    &response.message.content,
-                    &finished_at,
-                )?;
 
                 // 日志会同时写入文件和数据库。
                 let _ = append_model_log(
@@ -341,26 +333,74 @@ impl WorkerContext {
                     Some(&response_json),
                     None,
                 );
-                repo.insert_call(&NewCallRecord {
-                    id: Uuid::new_v4().to_string(),
-                    job_id: self.job_id.clone(),
-                    project_id: self.project_id.clone(),
-                    block_id: block.id.clone(),
-                    model_name: display_model_name(&self.settings),
-                    base_url: self.settings.base_url.clone(),
-                    request_json,
-                    response_json: Some(response_json),
-                    status: "completed".to_string(),
-                    started_at,
-                    finished_at: Some(finished_at.clone()),
-                    latency_ms: Some(latency_ms),
-                    prompt_tokens: response.usage.prompt_tokens,
-                    completion_tokens: response.usage.completion_tokens,
-                    error_message: None,
-                })?;
-                repo.replace_issues(&self.project_id, &self.job_id, &block.id, &issues)?;
-                repo.update_block_status(&block.id, ProofreadingStatus::Completed, &finished_at)?;
-                Ok(())
+                match to_proofreading_issues(
+                    &self.project_id,
+                    &self.job_id,
+                    &block.id,
+                    &block.text_content,
+                    &response.message.content,
+                    &finished_at,
+                ) {
+                    Ok(issues) => {
+                        repo.insert_call(&NewCallRecord {
+                            id: Uuid::new_v4().to_string(),
+                            job_id: self.job_id.clone(),
+                            project_id: self.project_id.clone(),
+                            block_id: block.id.clone(),
+                            model_name: display_model_name(&self.settings),
+                            base_url: self.settings.base_url.clone(),
+                            request_json,
+                            response_json: Some(response_json),
+                            status: "completed".to_string(),
+                            started_at,
+                            finished_at: Some(finished_at.clone()),
+                            latency_ms: Some(latency_ms),
+                            prompt_tokens: response.usage.prompt_tokens,
+                            completion_tokens: response.usage.completion_tokens,
+                            error_message: None,
+                        })?;
+                        repo.replace_issues(&self.project_id, &self.job_id, &block.id, &issues)?;
+                        repo.update_block_status(
+                            &block.id,
+                            ProofreadingStatus::Completed,
+                            &finished_at,
+                        )?;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        let _ = append_model_log(
+                            &self.project_id,
+                            &self.job_id,
+                            &block.id,
+                            &request_json,
+                            Some(&response_json),
+                            Some(&error.message),
+                        );
+                        repo.insert_call(&NewCallRecord {
+                            id: Uuid::new_v4().to_string(),
+                            job_id: self.job_id.clone(),
+                            project_id: self.project_id.clone(),
+                            block_id: block.id.clone(),
+                            model_name: display_model_name(&self.settings),
+                            base_url: self.settings.base_url.clone(),
+                            request_json,
+                            response_json: Some(response_json),
+                            status: "failed".to_string(),
+                            started_at,
+                            finished_at: Some(finished_at.clone()),
+                            latency_ms: Some(latency_ms),
+                            prompt_tokens: response.usage.prompt_tokens,
+                            completion_tokens: response.usage.completion_tokens,
+                            error_message: Some(error.message.clone()),
+                        })?;
+                        repo.update_block_status(
+                            &block.id,
+                            ProofreadingStatus::Failed,
+                            &finished_at,
+                        )?;
+                        Ok(())
+                    }
+                }
             }
             Err(error) => {
                 let finished_at = crate::services::import_service::now_rfc3339()?;
@@ -629,7 +669,7 @@ fn apply_metrics(job: &mut ProofreadingJob, metrics: JobMetrics, finished_at: &s
 }
 
 /// 组装发给模型的请求体。
-/// `response_format` 用 JSON Schema 限制模型输出结构。
+/// 输出约束主要通过提示词完成，以兼容更多 OpenAI-compatible 接口。
 fn build_model_request_body(
     settings: &AppSettings,
     request_payload: &RequestPayload<'_>,
@@ -638,52 +678,10 @@ fn build_model_request_body(
         "model": settings.model,
         "temperature": settings.temperature,
         "max_tokens": settings.max_tokens,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "proofreading_issues",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "issues": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string" },
-                                    "severity": { "type": "string" },
-                                    "start_offset": { "type": "integer" },
-                                    "end_offset": { "type": "integer" },
-                                    "quote": { "type": "string" },
-                                    "suggestion": { "type": "string" },
-                                    "explanation": { "type": "string" },
-                                    "normalized_replacement": {
-                                        "type": ["string", "null"]
-                                    }
-                                },
-                                "required": [
-                                    "type",
-                                    "severity",
-                                    "start_offset",
-                                    "end_offset",
-                                    "quote",
-                                    "suggestion",
-                                    "explanation",
-                                    "normalized_replacement"
-                                ],
-                                "additionalProperties": false
-                            }
-                        }
-                    },
-                    "required": ["issues"],
-                    "additionalProperties": false
-                }
-            }
-        },
         "messages": [
             {
                 "role": "system",
-                "content": settings.system_prompt_template
+                "content": build_system_prompt(settings)
             },
             {
                 "role": "user",
@@ -691,6 +689,13 @@ fn build_model_request_body(
             }
         ]
     }))
+}
+
+fn build_system_prompt(settings: &AppSettings) -> String {
+    format!(
+        "{}\n\n返回要求：\n1. 只返回 JSON，不要输出解释、Markdown、代码块。\n2. JSON 顶层必须是对象，结构为 {{\"issues\": [...]}}。\n3. 如果没有问题，返回 {{\"issues\": []}}。\n4. 每个 issue 必须包含字段：type、severity、start_offset、end_offset、quote、suggestion、explanation、normalized_replacement。\n5. normalized_replacement 没有明确替换值时返回 null。\n\n返回示例：\n{{\"issues\":[{{\"type\":\"typo\",\"severity\":\"medium\",\"start_offset\":12,\"end_offset\":14,\"quote\":\"示列\",\"suggestion\":\"示例\",\"explanation\":\"存在错别字，应改为“示例”\",\"normalized_replacement\":\"示例\"}}]}}",
+        settings.system_prompt_template.trim()
+    )
 }
 
 /// 把 prompt / response / error 追加写入当天日志文件。
@@ -773,6 +778,12 @@ fn to_proofreading_issues(
 
 /// 模型有时会返回带 Markdown 包裹的 JSON，这里先做一层容错解析。
 fn parse_model_payload(raw_content: &str) -> AppResult<ModelPayload> {
+    if raw_content.trim().is_empty() {
+        return Err(AppError::new(
+            "empty_model_content",
+            "模型返回空内容，无法解析校对结果",
+        ));
+    }
     let content = extract_json_object(raw_content);
     serde_json::from_str(&content)
         .map_err(|error| AppError::new("model_payload_error", error.to_string()))
