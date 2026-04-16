@@ -129,6 +129,33 @@ impl ProofreadingRepository {
         .map_err(Into::into)
     }
 
+    pub fn get_job(&self, job_id: &str) -> AppResult<Option<ProofreadingJob>> {
+        let conn = self.db.connect()?;
+        conn.query_row(
+            r#"
+            SELECT id, project_id, mode, status, options_json, auto_resume, started_at, finished_at,
+                   total_blocks, completed_blocks, failed_blocks, total_issues, total_tokens_in,
+                   total_tokens_out, total_latency_ms
+            FROM proofreading_jobs
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+            [job_id],
+            map_job_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn pause_running_job(&self, project_id: &str) -> AppResult<Option<ProofreadingJob>> {
+        let Some(mut job) = self.get_running_job(project_id)? else {
+            return Ok(None);
+        };
+        job.status = ProofreadingStatus::Paused;
+        self.update_job(&job)?;
+        Ok(Some(job))
+    }
+
     /// 更新 job 的聚合状态和统计数字。
     pub fn update_job(&self, job: &ProofreadingJob) -> AppResult<()> {
         let conn = self.db.connect()?;
@@ -528,6 +555,7 @@ fn parse_block_type(value: &str) -> crate::types::BlockType {
 fn parse_status(value: &str) -> ProofreadingStatus {
     match value {
         "running" => ProofreadingStatus::Running,
+        "paused" => ProofreadingStatus::Paused,
         "completed" => ProofreadingStatus::Completed,
         "failed" => ProofreadingStatus::Failed,
         _ => ProofreadingStatus::Pending,
@@ -574,6 +602,7 @@ fn status_name(value: ProofreadingStatus) -> &'static str {
     match value {
         ProofreadingStatus::Pending => "pending",
         ProofreadingStatus::Running => "running",
+        ProofreadingStatus::Paused => "paused",
         ProofreadingStatus::Completed => "completed",
         ProofreadingStatus::Failed => "failed",
     }

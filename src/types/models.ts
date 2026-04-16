@@ -12,6 +12,7 @@ export type BlockType = "paragraph" | "heading" | "table_cell";
 export type ProofreadingStatus =
   | "pending"
   | "running"
+  | "paused"
   | "completed"
   | "failed";
 

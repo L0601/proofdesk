@@ -251,6 +251,7 @@ pub enum BlockType {
 pub enum ProofreadingStatus {
     Pending,
     Running,
+    Paused,
     Completed,
     Failed,
 }

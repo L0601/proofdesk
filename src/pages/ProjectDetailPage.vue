@@ -12,14 +12,21 @@
         <div class="hero-actions">
           <button
             class="primary-button"
-            :disabled="proofreading || jobRunning"
+            :disabled="proofreading || jobRunning || jobPaused"
             @click="handleProofread"
           >
             {{ proofreading || jobRunning ? "校对中..." : "开始校对" }}
           </button>
           <button
             class="ghost-button"
-            :disabled="proofreading || jobRunning || !hasFailedBlocks"
+            :disabled="proofreading || !jobRunning"
+            @click="handlePauseProofreading"
+          >
+            {{ proofreading && jobRunning ? "暂停中..." : "暂停校对" }}
+          </button>
+          <button
+            class="ghost-button"
+            :disabled="proofreading || jobRunning || jobPaused || !hasFailedBlocks"
             @click="handleRetryFailed"
           >
             重试失败块
@@ -127,6 +134,10 @@
             <article class="stats-inline__item">
               <span>当前页</span>
               <strong>{{ currentPageLabel }}</strong>
+            </article>
+            <article class="stats-inline__item">
+              <span>状态</span>
+              <strong>{{ jobStatusLabel }}</strong>
             </article>
           </div>
 
@@ -252,6 +263,7 @@ import {
   getLatestProofreadingJob,
   listProofreadingCalls,
   listProofreadingIssues,
+  pauseProofreading,
   startProofreading,
 } from "@/api/proofreading";
 import type {
@@ -306,6 +318,15 @@ const jobMetrics = computed(() => ({
   failed: job.value?.failedBlocks ?? projectDetail.value?.failedBlocks ?? 0,
 }));
 const jobRunning = computed(() => job.value?.status === "running");
+const jobPaused = computed(() => job.value?.status === "paused");
+const jobStatusLabel = computed(() => {
+  if (!job.value) return "未开始";
+  if (job.value.status === "paused") return "已暂停";
+  if (job.value.status === "running") return "进行中";
+  if (job.value.status === "completed") return "已完成";
+  if (job.value.status === "failed") return "失败";
+  return "待处理";
+});
 let pollingTimer: number | null = null;
 
 const defaultOptions: ProofreadOptions = {
@@ -324,7 +345,7 @@ const defaultOptions: ProofreadOptions = {
 onMounted(() => {
   void loadInitialData();
   pollingTimer = window.setInterval(() => {
-    if (jobRunning.value) {
+    if (jobRunning.value || jobPaused.value) {
       void refreshProofreadingData();
     }
   }, 5000);
@@ -423,6 +444,27 @@ async function handleRetryFailed() {
     );
   } catch (error) {
     loadError.value = extractMessage(error, "失败块重试失败。");
+  } finally {
+    proofreading.value = false;
+  }
+}
+
+async function handlePauseProofreading() {
+  if (!isTauriApp()) {
+    loadError.value = "请通过 Tauri 桌面环境执行暂停。";
+    return;
+  }
+
+  proofreading.value = true;
+  loadError.value = "";
+  panelMessage.value = "";
+
+  try {
+    job.value = await pauseProofreading(projectId.value);
+    await refreshProofreadingData();
+    panelMessage.value = "校对任务已暂停。";
+  } catch (error) {
+    loadError.value = extractMessage(error, "暂停校对失败。");
   } finally {
     proofreading.value = false;
   }

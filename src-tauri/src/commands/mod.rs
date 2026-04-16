@@ -129,6 +129,14 @@ pub async fn start_proofreading(
     Ok(job)
 }
 
+#[tauri::command]
+pub fn pause_proofreading(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<Option<ProofreadingJob>> {
+    state.proofreading_repository().pause_running_job(&project_id)
+}
+
 /// 下面这些命令都是纯读取，不会触发新的模型调用。
 #[tauri::command]
 pub fn get_latest_proofreading_job(

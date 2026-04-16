@@ -227,6 +227,11 @@ impl ProofreadService {
             })?;
         }
 
+        sync_job_progress(&self.db, &job.id, &job.project_id)?;
+        if matches!(current_job_status(&repo, &job.id)?, ProofreadingStatus::Paused) {
+            return Ok(());
+        }
+
         let finished_at = crate::services::import_service::now_rfc3339()?;
         finalize_job(&repo, &project_repo, &mut job, &finished_at)?;
         Ok(())
@@ -267,6 +272,9 @@ impl WorkerContext {
     /// 一个 worker 会不断从共享队列取 block，直到队列为空。
     async fn run(&self) {
         loop {
+            if !self.should_continue().await {
+                return;
+            }
             let block = self.next_block().await;
             let Some(block) = block else {
                 return;
@@ -275,6 +283,14 @@ impl WorkerContext {
                 let _ = self.mark_internal_failure(&block, &error.message).await;
             }
         }
+    }
+
+    async fn should_continue(&self) -> bool {
+        let repo = ProofreadingRepository::new(self.db.clone());
+        matches!(
+            current_job_status(&repo, &self.job_id),
+            Ok(ProofreadingStatus::Running)
+        )
     }
 
     /// 从共享队列里取一个 block。
@@ -366,6 +382,7 @@ impl WorkerContext {
                             ProofreadingStatus::Completed,
                             &finished_at,
                         )?;
+                        sync_job_progress(&self.db, &self.job_id, &self.project_id)?;
                         Ok(())
                     }
                     Err(error) => {
@@ -399,6 +416,7 @@ impl WorkerContext {
                             ProofreadingStatus::Failed,
                             &finished_at,
                         )?;
+                        sync_job_progress(&self.db, &self.job_id, &self.project_id)?;
                         Ok(())
                     }
                 }
@@ -432,6 +450,7 @@ impl WorkerContext {
                     error_message: Some(error.message.clone()),
                 })?;
                 repo.update_block_status(&block.id, ProofreadingStatus::Failed, &finished_at)?;
+                sync_job_progress(&self.db, &self.job_id, &self.project_id)?;
                 Ok(())
             }
         }
@@ -476,6 +495,7 @@ impl WorkerContext {
         })?;
         repo.replace_issues(&self.project_id, &self.job_id, &block.id, &[])?;
         repo.update_block_status(&block.id, ProofreadingStatus::Completed, &finished_at)?;
+        sync_job_progress(&self.db, &self.job_id, &self.project_id)?;
         Ok(())
     }
 
@@ -514,6 +534,7 @@ impl WorkerContext {
             error_message: Some(error_message.to_string()),
         })?;
         repo.update_block_status(&block.id, ProofreadingStatus::Failed, &finished_at)?;
+        sync_job_progress(&self.db, &self.job_id, &self.project_id)?;
         Ok(())
     }
 }
@@ -667,6 +688,36 @@ fn apply_metrics(job: &mut ProofreadingJob, metrics: JobMetrics, finished_at: &s
         ProofreadingStatus::Completed
     };
     job.finished_at = Some(finished_at.to_string());
+}
+
+fn sync_job_progress(db: &Database, job_id: &str, project_id: &str) -> AppResult<()> {
+    let repo = ProofreadingRepository::new(db.clone());
+    let project_repo = ProjectRepository::new(db.clone());
+    let Some(mut job) = repo.get_job(job_id)? else {
+        return Ok(());
+    };
+    let metrics = repo.job_metrics(job_id)?;
+    job.completed_blocks = metrics.completed_blocks;
+    job.failed_blocks = metrics.failed_blocks;
+    job.total_issues = metrics.total_issues;
+    job.total_tokens_in = metrics.total_tokens_in;
+    job.total_tokens_out = metrics.total_tokens_out;
+    job.total_latency_ms = metrics.total_latency_ms;
+    repo.update_job(&job)?;
+
+    let (completed, failed) = repo.count_block_statuses(project_id)?;
+    let now = crate::services::import_service::now_rfc3339()?;
+    project_repo.update_progress(project_id, ProjectStatus::Processing, completed, failed, &now)?;
+    Ok(())
+}
+
+fn current_job_status(
+    repo: &ProofreadingRepository,
+    job_id: &str,
+) -> AppResult<ProofreadingStatus> {
+    repo.get_job(job_id)?
+        .map(|job| job.status)
+        .ok_or_else(|| AppError::new("job_not_found", "未找到对应校对任务"))
 }
 
 /// 组装发给模型的请求体。
