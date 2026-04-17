@@ -745,6 +745,7 @@ fn build_model_request_body(
         "model": settings.model,
         "temperature": settings.temperature,
         "max_tokens": settings.max_tokens,
+        "reasoning_effort": "none",
         "messages": [
             {
                 "role": "system",
