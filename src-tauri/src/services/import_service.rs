@@ -503,7 +503,9 @@ impl ParagraphBuilder {
                 paragraph_index: Some(self.index),
                 run_range: self.run_range(),
                 page: None,
+                page_range: None,
                 item_range: None,
+                segments: None,
                 locator: Some(format!("paragraph:{}", self.index)),
             },
         })

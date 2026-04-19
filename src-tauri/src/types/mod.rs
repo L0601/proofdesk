@@ -59,8 +59,17 @@ pub struct SourceMap {
     pub paragraph_index: Option<i64>,
     pub run_range: Option<(i64, i64)>,
     pub page: Option<i64>,
+    pub page_range: Option<(i64, i64)>,
     pub item_range: Option<(i64, i64)>,
+    pub segments: Option<Vec<SourceSegment>>,
     pub locator: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSegment {
+    pub page: i64,
+    pub item_range: (i64, i64),
 }
 
 /// 导入阶段生成的标准化 block。

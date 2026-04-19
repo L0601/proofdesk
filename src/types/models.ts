@@ -73,7 +73,12 @@ export interface SourceMap {
   paragraphIndex?: number | null;
   runRange?: [number, number] | null;
   page?: number | null;
+  pageRange?: [number, number] | null;
   itemRange?: [number, number] | null;
+  segments?: Array<{
+    page: number;
+    itemRange: [number, number];
+  }> | null;
   locator?: string | null;
 }
 

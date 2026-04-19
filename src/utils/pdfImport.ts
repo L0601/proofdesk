@@ -20,6 +20,19 @@ type Line = {
   avgHeight: number;
 };
 
+type ParagraphSegment = {
+  page: number;
+  itemRange: [number, number];
+};
+
+type PdfParagraph = {
+  page: number;
+  text: string;
+  startItemIndex: number;
+  endItemIndex: number;
+  segments: ParagraphSegment[];
+};
+
 type ImportLogger = (message: string, payload?: unknown) => void;
 
 type PdfImportOptions = {
@@ -31,6 +44,7 @@ const MIN_CHARS_PER_PAGE = 20;
 const MAX_SUSPICIOUS_RATIO = 0.6;
 const LINE_MERGE_Y_THRESHOLD = 3;
 const PARAGRAPH_GAP_FACTOR = 1.65;
+const MIN_SEPARATOR_RUN = 5;
 
 let pdfjsPromise: Promise<PdfJsLib> | null = null;
 
@@ -51,8 +65,7 @@ export async function extractPdfNormalizedDocument(
     numPages: document.numPages,
   });
   const suspiciousPages: number[] = [];
-  const blocks: NormalizedBlock[] = [];
-  let blockIndex = 0;
+  const paragraphs: PdfParagraph[] = [];
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     logger?.("开始提取页面文本", { pageNumber });
@@ -74,35 +87,34 @@ export async function extractPdfNormalizedDocument(
     }
 
     const lines = buildLines(items);
-    const paragraphs = buildParagraphs(lines);
+    const pageParagraphs = buildParagraphs(lines);
 
-    for (const paragraph of paragraphs) {
+    for (const paragraph of pageParagraphs) {
       const text = sanitizePdfParagraphText(paragraph.text);
       if (!text) {
         continue;
       }
-
-      if (text.length < minBlockChars) {
+      if (isSeparatorOnlyParagraph(text)) {
         continue;
       }
-
-      blocks.push({
-        id: `blk_${String(blockIndex + 1).padStart(6, "0")}`,
-        type: "paragraph",
+      paragraphs.push({
         page: pageNumber,
-        runs: [{ text, marks: [] }],
         text,
-        layout: defaultLayout(),
-        sourceMap: {
-          sourceType: "pdf",
-          page: pageNumber,
-          itemRange: [paragraph.startItemIndex, paragraph.endItemIndex],
-          locator: `page:${pageNumber}`,
-        },
+        startItemIndex: paragraph.startItemIndex,
+        endItemIndex: paragraph.endItemIndex,
+        segments: [
+          {
+            page: pageNumber,
+            itemRange: [paragraph.startItemIndex, paragraph.endItemIndex],
+          },
+        ],
       });
-      blockIndex += 1;
     }
   }
+
+  const blocks = mergeCrossPageParagraphs(paragraphs)
+    .filter((paragraph) => paragraph.text.length >= minBlockChars)
+    .map((paragraph, index) => toPdfBlock(paragraph, index));
 
   if (
     document.numPages > 0 &&
@@ -308,6 +320,159 @@ function sanitizePdfParagraphText(text: string) {
     .replace(/[ \f\v]+/g, " ")
     .replace(/ *\n */g, "\n")
     .trim();
+}
+
+function isSeparatorOnlyParagraph(text: string) {
+  const compact = text.replace(/\s+/g, "");
+  if (!compact) {
+    return true;
+  }
+  const stripped = stripSeparatorRuns(compact, MIN_SEPARATOR_RUN);
+  return stripped.length === 0;
+}
+
+function stripSeparatorRuns(text: string, minRunLength: number) {
+  let output = "";
+  let index = 0;
+  const chars = [...text];
+
+  while (index < chars.length) {
+    const end = findSeparatorRunEnd(chars, index);
+    if (end - index >= minRunLength) {
+      index = end;
+      continue;
+    }
+    output += chars[index];
+    index += 1;
+  }
+
+  return output;
+}
+
+function findSeparatorRunEnd(chars: string[], start: number) {
+  if (!isSeparatorLikeChar(chars[start])) {
+    return start + 1;
+  }
+
+  let index = start + 1;
+  while (index < chars.length && chars[index] === chars[start]) {
+    index += 1;
+  }
+  return index;
+}
+
+function isSeparatorLikeChar(char: string) {
+  return /[-_=~—－─━﹣·•●○◦*※。.…]+/.test(char);
+}
+
+function mergeCrossPageParagraphs(paragraphs: PdfParagraph[]) {
+  const merged: PdfParagraph[] = [];
+  for (const paragraph of paragraphs) {
+    const previous = merged[merged.length - 1];
+    if (previous && shouldMergeParagraphs(previous, paragraph)) {
+      previous.text = joinParagraphText(previous.text, paragraph.text);
+      previous.endItemIndex = paragraph.endItemIndex;
+      previous.segments.push(...paragraph.segments);
+      continue;
+    }
+    merged.push({ ...paragraph, segments: [...paragraph.segments] });
+  }
+  return merged;
+}
+
+function shouldMergeParagraphs(previous: PdfParagraph, current: PdfParagraph) {
+  if (current.page !== previous.page + 1) {
+    return false;
+  }
+  if (isLikelyHeaderFooter(previous.text) || isLikelyHeaderFooter(current.text)) {
+    return false;
+  }
+  if (hasStrongTerminalPunctuation(previous.text)) {
+    return false;
+  }
+  if (startsLikeNewParagraph(current.text)) {
+    return false;
+  }
+  return true;
+}
+
+function joinParagraphText(previous: string, current: string) {
+  const left = previous.replace(/\s+$/g, "");
+  const right = current.replace(/^\s+/g, "");
+  if (!left || !right) {
+    return `${left}${right}`;
+  }
+  return needsJoinSpace(left, right) ? `${left} ${right}` : `${left}\n${right}`;
+}
+
+function needsJoinSpace(left: string, right: string) {
+  const lastChar = left[left.length - 1] ?? "";
+  const firstChar = right[0] ?? "";
+  return /[A-Za-z0-9]$/.test(lastChar) && /^[A-Za-z0-9]/.test(firstChar);
+}
+
+function hasStrongTerminalPunctuation(text: string) {
+  const tail = stripTrailingClosers(text);
+  return /[。！？!?；;：:.]$/.test(tail);
+}
+
+function stripTrailingClosers(text: string) {
+  return text.trimEnd().replace(/[）)\]】〉》」』”’"']+$/g, "");
+}
+
+function startsLikeNewParagraph(text: string) {
+  const head = text.trimStart();
+  if (!head) {
+    return false;
+  }
+  if (
+    /^(第[一二三四五六七八九十百千万0-9]+[章节部分篇]|[一二三四五六七八九十]+[、.．]|[(（][一二三四五六七八九十0-9]+[)）]|[0-9]+[、.．)])/.test(
+      head,
+    )
+  ) {
+    return true;
+  }
+  return /^[•●▪◦·\-*]/.test(head);
+}
+
+function isLikelyHeaderFooter(text: string) {
+  const value = text.trim();
+  if (!value) {
+    return true;
+  }
+  return (
+    /^第?\s*[0-9一二三四五六七八九十]+\s*页$/.test(value) ||
+    /^[0-9]+$/.test(value)
+  );
+}
+
+function toPdfBlock(paragraph: PdfParagraph, index: number): NormalizedBlock {
+  const startPage = paragraph.segments[0]?.page ?? paragraph.page;
+  const endPage =
+    paragraph.segments[paragraph.segments.length - 1]?.page ?? startPage;
+  const locator =
+    startPage === endPage ? `page:${startPage}` : `page:${startPage}-${endPage}`;
+  const itemRange =
+    startPage === endPage
+      ? ([paragraph.startItemIndex, paragraph.endItemIndex] as [number, number])
+      : null;
+
+  return {
+    id: `blk_${String(index + 1).padStart(6, "0")}`,
+    type: "paragraph",
+    page: startPage,
+    runs: [{ text: paragraph.text, marks: [] }],
+    text: paragraph.text,
+    layout: defaultLayout(),
+    sourceMap: {
+      sourceType: "pdf",
+      page: startPage,
+      pageRange: [startPage, endPage],
+      itemRange,
+      segments: paragraph.segments,
+      locator,
+    },
+  };
 }
 
 function defaultLayout(): BlockLayout {

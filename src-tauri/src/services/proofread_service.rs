@@ -1007,20 +1007,30 @@ fn sanitize_model_input(text: &str) -> SanitizedText {
     let chars = text.chars().collect::<Vec<_>>();
     let mut output = String::with_capacity(text.len());
     let mut char_map = Vec::with_capacity(chars.len());
+    let mut index = 0;
 
-    for (index, current) in chars.iter().enumerate() {
+    while index < chars.len() {
+        let current = chars[index];
+        let separator_run_end = find_separator_run_end(&chars, index);
+        if separator_run_end - index >= 5 {
+            index = separator_run_end;
+            continue;
+        }
         let previous = if index > 0 { Some(chars[index - 1]) } else { None };
         let next = chars.get(index + 1).copied();
-        if should_drop_inline_gap(*current, previous, next) || is_separator_char(*current) {
+        if should_drop_inline_gap(current, previous, next) || is_separator_char(current) {
+            index += 1;
             continue;
         }
-        if *current == '\n' && is_inline_line_break(previous, next) {
+        if current == '\n' && is_inline_line_break(previous, next) {
             output.push(' ');
             char_map.push(index);
+            index += 1;
             continue;
         }
-        output.push(*current);
+        output.push(current);
         char_map.push(index);
+        index += 1;
     }
 
     SanitizedText { text: output, char_map }
@@ -1053,6 +1063,44 @@ fn is_cjk(value: char) -> bool {
 
 fn is_separator_char(value: char) -> bool {
     matches!(value, '-' | '—' | '－' | '_' | '─' | '━')
+}
+
+fn find_separator_run_end(chars: &[char], start: usize) -> usize {
+    if !is_separator_run_char(chars[start]) {
+        return start + 1;
+    }
+
+    let current = chars[start];
+    let mut index = start + 1;
+    while index < chars.len() && chars[index] == current {
+        index += 1;
+    }
+    index
+}
+
+fn is_separator_run_char(value: char) -> bool {
+    matches!(
+        value,
+        '-'
+            | '_'
+            | '='
+            | '~'
+            | '—'
+            | '－'
+            | '─'
+            | '━'
+            | '﹣'
+            | '·'
+            | '•'
+            | '●'
+            | '○'
+            | '◦'
+            | '*'
+            | '※'
+            | '。'
+            | '.'
+            | '…'
+    )
 }
 
 /// 判断是否具备真实调模型的最低条件。
