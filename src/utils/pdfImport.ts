@@ -275,8 +275,15 @@ function buildParagraphs(lines: Line[]) {
       continue;
     }
 
+    const previousText = current.textParts[current.textParts.length - 1] ?? "";
     const verticalGap = Math.abs(current.previousY - line.y);
-    const shouldBreak = verticalGap > current.previousHeight * PARAGRAPH_GAP_FACTOR;
+    const shouldBreak = shouldBreakParagraph(
+      previousText,
+      line.text,
+      verticalGap,
+      current.previousHeight,
+      line.avgHeight,
+    );
 
     if (shouldBreak) {
       paragraphs.push({
@@ -320,6 +327,51 @@ function sanitizePdfParagraphText(text: string) {
     .replace(/[ \f\v]+/g, " ")
     .replace(/ *\n */g, "\n")
     .trim();
+}
+
+function shouldBreakParagraph(
+  previousText: string,
+  currentText: string,
+  verticalGap: number,
+  previousHeight: number,
+  currentHeight: number,
+) {
+  const threshold =
+    Math.max(previousHeight, currentHeight, 12) * PARAGRAPH_GAP_FACTOR;
+  if (verticalGap <= threshold) {
+    return false;
+  }
+  return !shouldKeepLinesTogether(previousText, currentText);
+}
+
+function shouldKeepLinesTogether(previousText: string, currentText: string) {
+  if (!previousText.trim() || !currentText.trim()) {
+    return false;
+  }
+  if (hasStrongTerminalPunctuation(previousText)) {
+    return false;
+  }
+  if (startsLikeNewParagraph(currentText)) {
+    return false;
+  }
+  if (
+    looksLikeHeadingOrAuthor(previousText) ||
+    looksLikeHeadingOrAuthor(currentText)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function looksLikeHeadingOrAuthor(text: string) {
+  const value = text.trim();
+  if (!value) {
+    return false;
+  }
+  if (value.length <= 24 && !/[，。！？!?；;：:]/.test(value)) {
+    return true;
+  }
+  return false;
 }
 
 function isSeparatorOnlyParagraph(text: string) {
