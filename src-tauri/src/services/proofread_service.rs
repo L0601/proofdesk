@@ -298,6 +298,10 @@ impl WorkerContext {
         )
     }
 
+    fn should_persist(&self, repo: &ProofreadingRepository) -> AppResult<bool> {
+        Ok(repo.project_exists(&self.project_id)? && repo.get_job(&self.job_id)?.is_some())
+    }
+
     /// 从共享队列里取一个 block。
     async fn next_block(&self) -> Option<DocumentBlock> {
         let mut queue = self.queue.lock().await;
@@ -307,6 +311,9 @@ impl WorkerContext {
     /// 单个 block 的完整处理流程。
     async fn process_block(&self, block: DocumentBlock) -> AppResult<()> {
         let repo = ProofreadingRepository::new(self.db.clone());
+        if !self.should_persist(&repo)? {
+            return Ok(());
+        }
         let started_at = crate::services::import_service::now_rfc3339()?;
         repo.update_block_status(&block.id, ProofreadingStatus::Running, &started_at)?;
 
@@ -354,6 +361,9 @@ impl WorkerContext {
                 let finished_at = crate::services::import_service::now_rfc3339()?;
                 let latency_ms = timer.elapsed().as_millis() as i64;
                 let response_json = serde_json::to_string(&response)?;
+                if !self.should_persist(repo)? {
+                    return Ok(());
+                }
 
                 // 日志会同时写入文件和数据库。
                 let _ = append_model_log(
@@ -439,6 +449,9 @@ impl WorkerContext {
             Err(error) => {
                 let finished_at = crate::services::import_service::now_rfc3339()?;
                 let latency_ms = timer.elapsed().as_millis() as i64;
+                if !self.should_persist(repo)? {
+                    return Ok(());
+                }
                 let _ = append_model_log(
                     &self.project_id,
                     &self.job_id,
@@ -482,6 +495,9 @@ impl WorkerContext {
         let finished_at = crate::services::import_service::now_rfc3339()?;
         let response_json = "{\"issues\":[]}".to_string();
         let message = "未配置完整模型参数，当前以演示模式跳过真实调用";
+        if !self.should_persist(repo)? {
+            return Ok(());
+        }
 
         let _ = append_model_log(
             &self.project_id,
@@ -521,6 +537,9 @@ impl WorkerContext {
         error_message: &str,
     ) -> AppResult<()> {
         let repo = ProofreadingRepository::new(self.db.clone());
+        if !self.should_persist(&repo)? {
+            return Ok(());
+        }
         let started_at = crate::services::import_service::now_rfc3339()?;
         let finished_at = crate::services::import_service::now_rfc3339()?;
         let _ = append_model_log(
@@ -708,6 +727,9 @@ fn apply_metrics(job: &mut ProofreadingJob, metrics: JobMetrics, finished_at: &s
 fn sync_job_progress(db: &Database, job_id: &str, project_id: &str) -> AppResult<()> {
     let repo = ProofreadingRepository::new(db.clone());
     let project_repo = ProjectRepository::new(db.clone());
+    if !repo.project_exists(project_id)? {
+        return Ok(());
+    }
     let Some(mut job) = repo.get_job(job_id)? else {
         return Ok(());
     };

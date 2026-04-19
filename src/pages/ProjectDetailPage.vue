@@ -12,43 +12,20 @@
         <div class="hero-actions">
           <button
             class="primary-button"
-            :disabled="proofreading || jobRunning || jobPaused"
+            :disabled="proofreading || jobRunning"
             @click="handleProofread"
           >
             {{ proofreading || jobRunning ? "校对中..." : "开始校对" }}
           </button>
           <button
             class="ghost-button"
-            :disabled="proofreading || !jobRunning"
-            @click="handlePauseProofreading"
-          >
-            {{ proofreading && jobRunning ? "暂停中..." : "暂停校对" }}
-          </button>
-          <button
-            class="ghost-button"
-            :disabled="proofreading || jobRunning || jobPaused || !hasFailedBlocks"
+            :disabled="proofreading || jobRunning || !hasFailedBlocks"
             @click="handleRetryFailed"
           >
             重试失败块
           </button>
           <button
             class="ghost-button"
-            :class="{ 'ghost-button--active': activeView === 'proofread' }"
-            @click="activeView = 'proofread'"
-          >
-            校对视图
-          </button>
-          <button
-            class="ghost-button"
-            :class="{ 'ghost-button--active': activeView === 'source' }"
-            :disabled="!projectDetail"
-            @click="activeView = 'source'"
-          >
-            原文对照
-          </button>
-          <button
-            class="ghost-button"
-            :disabled="proofreading || jobRunning"
             @click="handleDeleteProject"
           >
             删除项目
@@ -75,7 +52,7 @@
       class="empty-state"
     >
       <strong>正在加载项目详情...</strong>
-      <p>稍后会展示项目元信息、正文和原文对照视图。</p>
+      <p>稍后会展示项目元信息、问题面板和正文校对视图。</p>
     </div>
 
     <div
@@ -83,20 +60,12 @@
       class="detail-layout"
     >
       <TiptapProofreadView
-        v-if="activeView === 'proofread' && projectDetail"
+        v-if="projectDetail"
         ref="proofreadViewRef"
         :normalized-doc-path="projectDetail.normalizedDocPath"
         :issues="issues"
         :selected-issue-id="selectedIssueId"
         @page-context-change="handlePageContextChange"
-      />
-      <DocxSourcePreview
-        v-else-if="projectDetail?.sourceType === 'docx'"
-        :file-path="projectDetail.sourceFilePath"
-      />
-      <PdfSourcePreview
-        v-else-if="projectDetail?.sourceType === 'pdf'"
-        :file-path="projectDetail.sourceFilePath"
       />
 
       <div class="side-panel">
@@ -256,14 +225,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import InfoCard from "@/components/common/InfoCard.vue";
 import TiptapProofreadView from "@/components/editor/TiptapProofreadView.vue";
-import DocxSourcePreview from "@/components/preview/DocxSourcePreview.vue";
-import PdfSourcePreview from "@/components/preview/PdfSourcePreview.vue";
 import { deleteProject, getProjectDetail } from "@/api/projects";
 import {
   getLatestProofreadingJob,
   listProofreadingCalls,
   listProofreadingIssues,
-  pauseProofreading,
   startProofreading,
 } from "@/api/proofreading";
 import type {
@@ -283,7 +249,6 @@ type ProofreadViewExpose = {
 const route = useRoute();
 const router = useRouter();
 const proofreadViewRef = ref<ProofreadViewExpose | null>(null);
-const activeView = ref<"proofread" | "source">("proofread");
 const loading = ref(false);
 const proofreading = ref(false);
 const loadError = ref("");
@@ -318,10 +283,8 @@ const jobMetrics = computed(() => ({
   failed: job.value?.failedBlocks ?? projectDetail.value?.failedBlocks ?? 0,
 }));
 const jobRunning = computed(() => job.value?.status === "running");
-const jobPaused = computed(() => job.value?.status === "paused");
 const jobStatusLabel = computed(() => {
   if (!job.value) return "未开始";
-  if (job.value.status === "paused") return "已暂停";
   if (job.value.status === "running") return "进行中";
   if (job.value.status === "completed") return "已完成";
   if (job.value.status === "failed") return "失败";
@@ -345,7 +308,7 @@ const defaultOptions: ProofreadOptions = {
 onMounted(() => {
   void loadInitialData();
   pollingTimer = window.setInterval(() => {
-    if (jobRunning.value || jobPaused.value) {
+    if (jobRunning.value) {
       void refreshProofreadingData();
     }
   }, 5000);
@@ -449,27 +412,6 @@ async function handleRetryFailed() {
   }
 }
 
-async function handlePauseProofreading() {
-  if (!isTauriApp()) {
-    loadError.value = "请通过 Tauri 桌面环境执行暂停。";
-    return;
-  }
-
-  proofreading.value = true;
-  loadError.value = "";
-  panelMessage.value = "";
-
-  try {
-    job.value = await pauseProofreading(projectId.value);
-    await refreshProofreadingData();
-    panelMessage.value = "校对任务已暂停。";
-  } catch (error) {
-    loadError.value = extractMessage(error, "暂停校对失败。");
-  } finally {
-    proofreading.value = false;
-  }
-}
-
 async function handleDeleteProject() {
   if (!projectDetail.value) {
     return;
@@ -480,13 +422,8 @@ async function handleDeleteProject() {
     return;
   }
 
-  if (jobRunning.value) {
-    loadError.value = "项目正在后台处理中，暂不允许删除。";
-    return;
-  }
-
   const confirmed = window.confirm(
-    `确认删除项目「${projectDetail.value.name}」吗？该项目的本地数据会被全部移除。`,
+    `确认删除项目「${projectDetail.value.name}」吗？正在进行中的校对也会被直接终止，本地数据会被全部移除。`,
   );
   if (!confirmed) {
     return;
@@ -507,7 +444,6 @@ async function handleDeleteProject() {
 
 async function handleSelectIssue(issue: ProofreadingIssue) {
   selectedIssueId.value = issue.id;
-  activeView.value = "proofread";
   await proofreadViewRef.value?.scrollToBlock(issue.blockId);
   await proofreadViewRef.value?.focusIssue();
 }
@@ -529,7 +465,6 @@ async function executeProofreading(
   job.value = await startProofreading(projectId.value, options);
   await refreshProofreadingData();
   panelMessage.value = successMessage;
-  activeView.value = "proofread";
   if (issues.value.length) {
     await handleSelectIssue(issues.value[0]);
   }

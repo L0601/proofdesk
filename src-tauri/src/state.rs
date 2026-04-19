@@ -70,6 +70,12 @@ impl AppState {
         active.contains(project_id)
     }
 
+    /// 删除项目时主动释放内存里的运行标记。
+    pub async fn release_project(&self, project_id: &str) {
+        let mut active = self.active_projects.lock().await;
+        active.remove(project_id);
+    }
+
     /// 派发一个后台 job。
     ///
     /// 流程是：

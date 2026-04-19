@@ -52,14 +52,7 @@ pub async fn delete_project(
     state: State<'_, AppState>,
     project_id: String,
 ) -> AppResult<()> {
-    // 删除前先确认后台没有任务在跑，避免数据库和任务互相打架。
-    if state.is_project_active(&project_id).await {
-        return Err(crate::error::AppError::new(
-            "project_processing",
-            "项目正在后台处理中，暂不允许删除",
-        ));
-    }
-
+    state.release_project(&project_id).await;
     let project_root = app.path().app_data_dir()?.join("projects").join(&project_id);
     state.project_repository().delete(&project_id)?;
     state.project_repository().delete_project_dir(&project_root)?;
@@ -127,14 +120,6 @@ pub async fn start_proofreading(
     let job = ProofreadService::new(state.db.clone()).start_job(&project_id, options)?;
     state.spawn_job(job.clone()).await;
     Ok(job)
-}
-
-#[tauri::command]
-pub fn pause_proofreading(
-    state: State<'_, AppState>,
-    project_id: String,
-) -> AppResult<Option<ProofreadingJob>> {
-    state.proofreading_repository().pause_running_job(&project_id)
 }
 
 /// 下面这些命令都是纯读取，不会触发新的模型调用。

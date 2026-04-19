@@ -147,13 +147,14 @@ impl ProofreadingRepository {
         .map_err(Into::into)
     }
 
-    pub fn pause_running_job(&self, project_id: &str) -> AppResult<Option<ProofreadingJob>> {
-        let Some(mut job) = self.get_running_job(project_id)? else {
-            return Ok(None);
-        };
-        job.status = ProofreadingStatus::Paused;
-        self.update_job(&job)?;
-        Ok(Some(job))
+    pub fn project_exists(&self, project_id: &str) -> AppResult<bool> {
+        let conn = self.db.connect()?;
+        let exists = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1)",
+            [project_id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(exists == 1)
     }
 
     /// 更新 job 的聚合状态和统计数字。

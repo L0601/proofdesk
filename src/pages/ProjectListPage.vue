@@ -109,7 +109,7 @@
       >
         <ul class="feature-list">
           <li>校对视图基于内部标准模型</li>
-          <li>原文对照视图只做展示参考</li>
+          <li>校对按 block 级问题锚点联动展示</li>
           <li>所有业务数据落本地 SQLite</li>
           <li>第一版不支持 OCR 与扫描型 PDF</li>
         </ul>

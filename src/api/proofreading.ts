@@ -22,12 +22,6 @@ export function getLatestProofreadingJob(projectId: string) {
   });
 }
 
-export function pauseProofreading(projectId: string) {
-  return invoke<ProofreadingJob | null>("pause_proofreading", {
-    projectId,
-  });
-}
-
 export function listProofreadingIssues(projectId: string) {
   return invoke<ProofreadingIssue[]>("list_proofreading_issues", {
     projectId,
