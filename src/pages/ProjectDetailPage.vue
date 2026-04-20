@@ -41,6 +41,50 @@
     </InfoCard>
 
     <div
+      v-if="searchOpen"
+      class="page-search-bar"
+    >
+      <span class="page-search-bar__hint">{{ searchShortcutLabel }}</span>
+      <input
+        ref="searchInputRef"
+        v-model="searchKeyword"
+        class="page-search-bar__input"
+        type="text"
+        placeholder="搜索正文与 AI 校对结果"
+        @keydown.enter.prevent="handleSearchEnter"
+      />
+      <span class="page-search-bar__count">命中 {{ searchMatchCount }}</span>
+      <button
+        class="ghost-button"
+        type="button"
+        @click="handleSearchPrev"
+      >
+        上一个
+      </button>
+      <button
+        class="ghost-button"
+        type="button"
+        @click="handleSearchNext"
+      >
+        下一个
+      </button>
+      <button
+        class="ghost-button"
+        type="button"
+        @click="closeSearchBar"
+      >
+        关闭
+      </button>
+    </div>
+
+    <div
+      v-if="searchOpen && searchStatus"
+      class="error-banner"
+    >
+      {{ searchStatus }}
+    </div>
+
+    <div
       v-if="loadError"
       class="error-banner"
     >
@@ -57,6 +101,7 @@
 
     <div
       v-else
+      ref="searchScopeRef"
       class="detail-layout"
     >
       <TiptapProofreadView
@@ -221,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import InfoCard from "@/components/common/InfoCard.vue";
 import TiptapProofreadView from "@/components/editor/TiptapProofreadView.vue";
@@ -263,6 +308,12 @@ const totalPages = ref(1);
 const visibleBlockIds = ref<string[]>([]);
 const issuePanelOpen = ref(true);
 const callPanelOpen = ref(false);
+const searchOpen = ref(false);
+const searchKeyword = ref("");
+const searchMatchCount = ref(0);
+const searchStatus = ref("");
+const searchInputRef = ref<HTMLInputElement | null>(null);
+const searchScopeRef = ref<HTMLElement | null>(null);
 
 const projectId = computed(() => String(route.params.id ?? ""));
 const projectTitle = computed(() => projectDetail.value?.name ?? projectId.value);
@@ -290,6 +341,12 @@ const jobStatusLabel = computed(() => {
   if (job.value.status === "failed") return "失败";
   return "待处理";
 });
+const searchShortcutLabel = computed(() => {
+  if (typeof navigator === "undefined") {
+    return "Ctrl+F";
+  }
+  return /mac/i.test(navigator.platform) ? "Command+F" : "Ctrl+F";
+});
 let pollingTimer: number | null = null;
 
 const defaultOptions: ProofreadOptions = {
@@ -307,6 +364,7 @@ const defaultOptions: ProofreadOptions = {
 
 onMounted(() => {
   void loadInitialData();
+  document.addEventListener("keydown", handleGlobalKeydown, true);
   pollingTimer = window.setInterval(() => {
     if (jobRunning.value) {
       void refreshProofreadingData();
@@ -315,10 +373,16 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("keydown", handleGlobalKeydown, true);
   if (pollingTimer !== null) {
     window.clearInterval(pollingTimer);
     pollingTimer = null;
   }
+});
+
+watch(searchKeyword, () => {
+  updateSearchMatchCount();
+  searchStatus.value = "";
 });
 
 async function loadInitialData() {
@@ -480,5 +544,81 @@ function extractMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (isSearchShortcut(event)) {
+    event.preventDefault();
+    void openSearchBar();
+    return;
+  }
+
+  if (event.key === "Escape" && searchOpen.value) {
+    event.preventDefault();
+    closeSearchBar();
+  }
+}
+
+function isSearchShortcut(event: KeyboardEvent) {
+  if (event.key.toLowerCase() !== "f") {
+    return false;
+  }
+  return event.metaKey || event.ctrlKey;
+}
+
+async function openSearchBar() {
+  searchOpen.value = true;
+  if (!searchKeyword.value.trim()) {
+    searchKeyword.value = String(window.getSelection()?.toString() ?? "").trim();
+  }
+  updateSearchMatchCount();
+  await nextTick();
+  searchInputRef.value?.focus();
+  searchInputRef.value?.select();
+}
+
+function closeSearchBar() {
+  searchOpen.value = false;
+  searchStatus.value = "";
+}
+
+function handleSearchNext() {
+  performSearch(false);
+}
+
+function handleSearchPrev() {
+  performSearch(true);
+}
+
+function performSearch(backward: boolean) {
+  const keyword = searchKeyword.value.trim();
+  if (!keyword) {
+    searchStatus.value = "请输入搜索内容。";
+    return;
+  }
+
+  const found = window.find(keyword, false, backward, true, false, false, false);
+  searchStatus.value = found ? "" : "未找到匹配项。";
+}
+
+function handleSearchEnter(event: KeyboardEvent) {
+  if (event.shiftKey) {
+    handleSearchPrev();
+    return;
+  }
+  handleSearchNext();
+}
+
+function updateSearchMatchCount() {
+  const keyword = searchKeyword.value.trim();
+  const source = searchScopeRef.value?.innerText ?? "";
+  if (!keyword || !source) {
+    searchMatchCount.value = 0;
+    return;
+  }
+
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = source.match(new RegExp(escaped, "gi"));
+  searchMatchCount.value = matches?.length ?? 0;
 }
 </script>
