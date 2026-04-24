@@ -369,7 +369,7 @@ onMounted(() => {
     if (jobRunning.value) {
       void refreshProofreadingData();
     }
-  }, 5000);
+  }, 2000);
 });
 
 onBeforeUnmount(() => {
