@@ -12,8 +12,8 @@ use rusqlite::{params, OptionalExtension};
 use crate::db::Database;
 use crate::error::AppResult;
 use crate::types::{
-    DocumentBlock, IssueSeverity, IssueStatus, IssueType, ProofreadingCall, ProofreadingIssue,
-    ProofreadingJob, ProofreadingMode, ProofreadingStatus,
+    ContentRole, DocumentBlock, IssueSeverity, IssueStatus, IssueType, ProofreadingCall,
+    ProofreadingIssue, ProofreadingJob, ProofreadingMode, ProofreadingStatus,
 };
 
 #[derive(Debug, Clone)]
@@ -193,8 +193,9 @@ impl ProofreadingRepository {
         let conn = self.db.connect()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, project_id, block_index, type, text_content, json_payload, source_page,
-                   source_locator, char_count, proofreading_status, updated_at
+            SELECT id, project_id, block_index, type, content_role, skip_proofread, skip_reason,
+                   text_content, json_payload, source_page, source_locator, char_count,
+                   proofreading_status, updated_at
             FROM document_blocks
             WHERE project_id = ?1
             ORDER BY block_index ASC
@@ -207,13 +208,16 @@ impl ProofreadingRepository {
                 project_id: row.get(1)?,
                 block_index: row.get(2)?,
                 block_type: parse_block_type(&row.get::<_, String>(3)?),
-                text_content: row.get(4)?,
-                json_payload: row.get(5)?,
-                source_page: row.get(6)?,
-                source_locator: row.get(7)?,
-                char_count: row.get(8)?,
-                proofreading_status: parse_status(&row.get::<_, String>(9)?),
-                updated_at: row.get(10)?,
+                content_role: parse_content_role(&row.get::<_, String>(4)?),
+                skip_proofread: row.get::<_, i64>(5)? == 1,
+                skip_reason: row.get(6)?,
+                text_content: row.get(7)?,
+                json_payload: row.get(8)?,
+                source_page: row.get(9)?,
+                source_locator: row.get(10)?,
+                char_count: row.get(11)?,
+                proofreading_status: parse_status(&row.get::<_, String>(12)?),
+                updated_at: row.get(13)?,
             })
         })?;
 
@@ -567,6 +571,14 @@ fn parse_block_type(value: &str) -> crate::types::BlockType {
         "heading" => crate::types::BlockType::Heading,
         "table_cell" => crate::types::BlockType::TableCell,
         _ => crate::types::BlockType::Paragraph,
+    }
+}
+
+fn parse_content_role(value: &str) -> ContentRole {
+    match value {
+        "cip_colophon" => ContentRole::CipColophon,
+        "toc" => ContentRole::Toc,
+        _ => ContentRole::Body,
     }
 }
 

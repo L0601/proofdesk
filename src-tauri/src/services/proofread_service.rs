@@ -30,8 +30,7 @@ use crate::repository::proofreading_repository::{
 };
 use crate::types::{
     AppSettings, DocumentBlock, IssueSeverity, IssueStatus, IssueType, ProjectStatus,
-    ProofreadOptions, ProofreadingIssue, ProofreadingJob, ProofreadingMode,
-    ProofreadingStatus,
+    ProofreadOptions, ProofreadingIssue, ProofreadingJob, ProofreadingMode, ProofreadingStatus,
 };
 
 pub struct ProofreadService {
@@ -141,7 +140,10 @@ impl ProofreadService {
             settings.proofread_skip_pages,
         )?;
         if blocks.is_empty() {
-            return Err(AppError::new("empty_document", "当前项目没有可校对的正文块"));
+            return Err(AppError::new(
+                "empty_document",
+                "当前项目没有可校对的正文块",
+            ));
         }
 
         let now = crate::services::import_service::now_rfc3339()?;
@@ -167,13 +169,7 @@ impl ProofreadService {
         };
 
         repo.create_job(&job)?;
-        project_repo.update_progress(
-            project_id,
-            ProjectStatus::Processing,
-            0,
-            0,
-            &now,
-        )?;
+        project_repo.update_progress(project_id, ProjectStatus::Processing, 0, 0, &now)?;
         Ok(job)
     }
 
@@ -221,19 +217,22 @@ impl ProofreadService {
                 queue: queue.clone(),
                 client: client.clone(),
             };
-            handles.push(tauri::async_runtime::spawn(async move {
-                worker.run().await
-            }));
+            handles.push(tauri::async_runtime::spawn(
+                async move { worker.run().await },
+            ));
         }
 
         for handle in handles {
-            handle.await.map_err(|error| {
-                AppError::new("proofread_worker_join_error", error.to_string())
-            })?;
+            handle
+                .await
+                .map_err(|error| AppError::new("proofread_worker_join_error", error.to_string()))?;
         }
 
         sync_job_progress(&self.db, &job.id, &job.project_id)?;
-        if matches!(current_job_status(&repo, &job.id)?, ProofreadingStatus::Paused) {
+        if matches!(
+            current_job_status(&repo, &job.id)?,
+            ProofreadingStatus::Paused
+        ) {
             return Ok(());
         }
 
@@ -627,7 +626,10 @@ async fn call_model(
     request_body: &serde_json::Value,
     settings: &AppSettings,
 ) -> AppResult<ModelCallResult> {
-    let url = format!("{}/chat/completions", settings.base_url.trim_end_matches('/'));
+    let url = format!(
+        "{}/chat/completions",
+        settings.base_url.trim_end_matches('/')
+    );
     let request = client.post(url);
     let request = if settings.api_key.trim().is_empty() {
         request
@@ -744,7 +746,13 @@ fn sync_job_progress(db: &Database, job_id: &str, project_id: &str) -> AppResult
 
     let (completed, failed) = repo.count_block_statuses(project_id)?;
     let now = crate::services::import_service::now_rfc3339()?;
-    project_repo.update_progress(project_id, ProjectStatus::Processing, completed, failed, &now)?;
+    project_repo.update_progress(
+        project_id,
+        ProjectStatus::Processing,
+        completed,
+        failed,
+        &now,
+    )?;
     Ok(())
 }
 
@@ -946,7 +954,8 @@ fn build_rules(issue_types: &[IssueType]) -> Vec<String> {
         format!("重点检查：{}", labels),
         "忽略标点问题、PDF 换行、分页断行、分隔线、空白字符导致的版式噪音".to_string(),
         "不要把“于\\n是”“一\\n种”“句号后换行”这类提取断行当作问题".to_string(),
-        "每项必须返回 type、severity、start_offset、end_offset、quote、suggestion、explanation".to_string(),
+        "每项必须返回 type、severity、start_offset、end_offset、quote、suggestion、explanation"
+            .to_string(),
     ]
 }
 
@@ -996,6 +1005,9 @@ fn select_pending_blocks(
 /// `skip_until_page = 1` 表示跳过第 1 页，从第 2 页开始校对。
 /// 没有页码的 block 默认保留，避免影响 DOCX 或缺页码数据。
 fn should_proofread_block(block: &crate::types::DocumentBlock, skip_until_page: i64) -> bool {
+    if block.skip_proofread {
+        return false;
+    }
     match block.source_page {
         Some(page) => page >= skip_until_page,
         None => true,
@@ -1016,7 +1028,11 @@ fn sanitize_model_input(text: &str) -> SanitizedText {
             index = separator_run_end;
             continue;
         }
-        let previous = if index > 0 { Some(chars[index - 1]) } else { None };
+        let previous = if index > 0 {
+            Some(chars[index - 1])
+        } else {
+            None
+        };
         let next = chars.get(index + 1).copied();
         if should_drop_inline_gap(current, previous, next) || is_separator_char(current) {
             index += 1;
@@ -1033,7 +1049,10 @@ fn sanitize_model_input(text: &str) -> SanitizedText {
         index += 1;
     }
 
-    SanitizedText { text: output, char_map }
+    SanitizedText {
+        text: output,
+        char_map,
+    }
 }
 
 fn is_inline_line_break(previous: Option<char>, next: Option<char>) -> bool {
@@ -1043,12 +1062,9 @@ fn is_inline_line_break(previous: Option<char>, next: Option<char>) -> bool {
     }
 }
 
-fn should_drop_inline_gap(
-    current: char,
-    previous: Option<char>,
-    next: Option<char>,
-) -> bool {
-    current.is_whitespace() && matches!((previous, next), (Some(left), Some(right)) if is_cjk_or_word(left) && is_cjk_or_word(right))
+fn should_drop_inline_gap(current: char, previous: Option<char>, next: Option<char>) -> bool {
+    current.is_whitespace()
+        && matches!((previous, next), (Some(left), Some(right)) if is_cjk_or_word(left) && is_cjk_or_word(right))
 }
 
 fn is_cjk_or_word(value: char) -> bool {
@@ -1081,8 +1097,7 @@ fn find_separator_run_end(chars: &[char], start: usize) -> usize {
 fn is_separator_run_char(value: char) -> bool {
     matches!(
         value,
-        '-'
-            | '_'
+        '-' | '_'
             | '='
             | '~'
             | '—'
@@ -1144,7 +1159,11 @@ fn text_prefix(text: &str, start_offset: i64) -> Option<String> {
     let end = start.min(chars.len());
     let from = end.saturating_sub(8);
     let prefix = chars[from..end].iter().collect::<String>();
-    if prefix.is_empty() { None } else { Some(prefix) }
+    if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix)
+    }
 }
 
 /// 截取问题后面的少量上下文。
@@ -1154,7 +1173,11 @@ fn text_suffix(text: &str, end_offset: i64) -> Option<String> {
     let suffix = chars[end.min(chars.len())..(end + 8).min(chars.len())]
         .iter()
         .collect::<String>();
-    if suffix.is_empty() { None } else { Some(suffix) }
+    if suffix.is_empty() {
+        None
+    } else {
+        Some(suffix)
+    }
 }
 
 #[cfg(test)]

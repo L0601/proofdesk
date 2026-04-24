@@ -108,6 +108,9 @@ pub struct DocumentBlock {
     pub block_index: i64,
     #[serde(rename = "type")]
     pub block_type: BlockType,
+    pub content_role: ContentRole,
+    pub skip_proofread: bool,
+    pub skip_reason: Option<String>,
     pub text_content: String,
     pub json_payload: String,
     pub source_page: Option<i64>,
@@ -252,6 +255,15 @@ pub enum BlockType {
     Paragraph,
     Heading,
     TableCell,
+}
+
+/// block 的内容角色，用于区分正文和应跳过校对的非正文。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentRole {
+    Body,
+    CipColophon,
+    Toc,
 }
 
 /// 任务或 block 的执行状态。

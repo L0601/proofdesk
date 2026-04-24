@@ -20,8 +20,8 @@ use zip::ZipArchive;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::types::{
-    BlockLayout, BlockRun, BlockType, NormalizedBlock, NormalizedDocument, ProjectStatus,
-    ProjectSummary, SourceMap, SourceType, TextAlign, TextMark,
+    BlockLayout, BlockRun, BlockType, ContentRole, NormalizedBlock, NormalizedDocument,
+    ProjectStatus, ProjectSummary, SourceMap, SourceType, TextAlign, TextMark,
 };
 
 pub struct ImportService {
@@ -65,7 +65,10 @@ impl ImportService {
 
         let detected = detect_source_type(&source_path)?;
         if detected.as_str() != source_type.as_str() {
-            return Err(AppError::new("source_type_mismatch", "文件类型与标准化文档类型不匹配"));
+            return Err(AppError::new(
+                "source_type_mismatch",
+                "文件类型与标准化文档类型不匹配",
+            ));
         }
 
         let project_id = Uuid::new_v4().to_string();
@@ -89,7 +92,13 @@ impl ImportService {
             &now,
         );
 
-        persist_project(&self.db, &summary, &original_path, &normalized_path, &normalized)?;
+        persist_project(
+            &self.db,
+            &summary,
+            &original_path,
+            &normalized_path,
+            &normalized,
+        )?;
         Ok(summary)
     }
 
@@ -112,7 +121,13 @@ impl ImportService {
             &now,
         );
 
-        persist_project(&self.db, &summary, &original_path, &normalized_path, &normalized)?;
+        persist_project(
+            &self.db,
+            &summary,
+            &original_path,
+            &normalized_path,
+            &normalized,
+        )?;
         Ok(summary)
     }
 }
@@ -135,7 +150,10 @@ fn detect_source_type(path: &Path) -> AppResult<SourceType> {
     match extension(path)?.as_str() {
         "docx" => Ok(SourceType::Docx),
         "pdf" => Ok(SourceType::Pdf),
-        _ => Err(AppError::new("unsupported_extension", "当前仅支持导入 DOCX 或 PDF")),
+        _ => Err(AppError::new(
+            "unsupported_extension",
+            "当前仅支持导入 DOCX 或 PDF",
+        )),
     }
 }
 
@@ -192,7 +210,11 @@ fn build_project_summary(
         id: project_id.to_string(),
         name: project_name.to_string(),
         source_type,
-        source_file_name: source_path.file_name().unwrap().to_string_lossy().to_string(),
+        source_file_name: source_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string(),
         status: ProjectStatus::Ready,
         total_blocks,
         completed_blocks: 0,
@@ -237,18 +259,23 @@ fn persist_project(
     )?;
 
     for (index, block) in document.blocks.iter().enumerate() {
+        let classification = classify_block_content(&block.text);
         tx.execute(
             r#"
             INSERT INTO document_blocks (
-              id, project_id, block_index, type, text_content, json_payload, source_page,
-              source_locator, char_count, proofreading_status, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+              id, project_id, block_index, type, content_role, skip_proofread, skip_reason,
+              text_content, json_payload, source_page, source_locator, char_count,
+              proofreading_status, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
             params![
                 block.id,
                 summary.id,
                 index as i64,
                 block_type_name(block.block_type),
+                content_role_name(classification.content_role),
+                classification.skip_proofread as i64,
+                classification.skip_reason,
                 block.text,
                 serde_json::to_string(block)?,
                 block.page,
@@ -285,7 +312,12 @@ fn parse_docx(project_id: &str, source_path: &Path) -> AppResult<NormalizedDocum
     loop {
         match reader.read_event() {
             Ok(Event::Start(event)) => {
-                handle_start(&event, &mut paragraph, &mut current_marks, &mut in_run_props)?;
+                handle_start(
+                    &event,
+                    &mut paragraph,
+                    &mut current_marks,
+                    &mut in_run_props,
+                )?;
             }
             Ok(Event::Empty(event)) => {
                 handle_empty(&event, &mut paragraph, &current_marks)?;
@@ -297,7 +329,13 @@ fn parse_docx(project_id: &str, source_path: &Path) -> AppResult<NormalizedDocum
                 }
             }
             Ok(Event::End(event)) => {
-                handle_end(event.name().as_ref(), &mut paragraph, &mut current_marks, &mut in_run_props, &mut blocks)?;
+                handle_end(
+                    event.name().as_ref(),
+                    &mut paragraph,
+                    &mut current_marks,
+                    &mut in_run_props,
+                    &mut blocks,
+                )?;
             }
             Ok(Event::Eof) => break,
             Err(error) => return Err(AppError::new("docx_parse_error", error.to_string())),
@@ -427,6 +465,148 @@ fn block_type_name(block_type: BlockType) -> &'static str {
     }
 }
 
+fn content_role_name(content_role: ContentRole) -> &'static str {
+    match content_role {
+        ContentRole::Body => "body",
+        ContentRole::CipColophon => "cip_colophon",
+        ContentRole::Toc => "toc",
+    }
+}
+
+struct BlockClassification {
+    content_role: ContentRole,
+    skip_proofread: bool,
+    skip_reason: Option<String>,
+}
+
+fn classify_block_content(text: &str) -> BlockClassification {
+    let value = normalize_rule_text(text);
+    if let Some(reason) = detect_cip_colophon(&value) {
+        return BlockClassification {
+            content_role: ContentRole::CipColophon,
+            skip_proofread: true,
+            skip_reason: Some(reason),
+        };
+    }
+    if detect_toc(&value) {
+        return BlockClassification {
+            content_role: ContentRole::Toc,
+            skip_proofread: true,
+            skip_reason: Some("toc_lines".to_string()),
+        };
+    }
+    BlockClassification {
+        content_role: ContentRole::Body,
+        skip_proofread: false,
+        skip_reason: None,
+    }
+}
+
+fn normalize_rule_text(text: &str) -> String {
+    text.replace('\u{0008}', "")
+        .replace('�', "")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+}
+
+fn detect_cip_colophon(text: &str) -> Option<String> {
+    let keywords = [
+        "图书在版编目",
+        "cip",
+        "中国国家版本馆",
+        "isbn",
+        "出版发行",
+        "责任编辑",
+        "排版",
+        "印刷",
+        "开本",
+        "印张",
+        "字数",
+        "版次",
+        "印次",
+        "定价",
+        "版权所有",
+        "翻印必究",
+        "社址",
+        "邮编",
+        "电话",
+        "网址",
+    ];
+    let normalized = text.to_lowercase();
+    let hits = keywords
+        .iter()
+        .filter(|keyword| normalized.contains(**keyword))
+        .count();
+    if hits >= 2 {
+        return Some("cip_keywords".to_string());
+    }
+    let has_cip = normalized.contains("cip");
+    let has_isbn = normalized.contains("isbn");
+    let has_publish = normalized.contains("版次") || normalized.contains("印次");
+    if has_cip && has_isbn && has_publish {
+        return Some("cip_isbn_edition".to_string());
+    }
+    None
+}
+
+fn detect_toc(text: &str) -> bool {
+    let lines = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.len() < 3 {
+        return false;
+    }
+    let toc_lines = lines.iter().filter(|line| is_toc_line(line)).count();
+    toc_lines * 10 >= lines.len() * 6
+}
+
+fn is_toc_line(line: &str) -> bool {
+    let starts_like_toc = starts_with_toc_heading(line);
+    let ends_with_page = ends_with_page_number(line);
+    let has_leader = has_toc_leader(line);
+    (starts_like_toc && ends_with_page)
+        || (starts_like_toc && has_leader)
+        || (has_leader && ends_with_page)
+}
+
+fn starts_with_toc_heading(line: &str) -> bool {
+    let prefixes = [
+        "第一",
+        "第二",
+        "第三",
+        "第四",
+        "第五",
+        "第六",
+        "第七",
+        "第八",
+        "第九",
+        "第十",
+        "参考文献",
+    ];
+    if prefixes.iter().any(|prefix| line.starts_with(prefix)) {
+        return line.contains('章') || line.contains('节') || line.starts_with("参考文献");
+    }
+    false
+}
+
+fn ends_with_page_number(line: &str) -> bool {
+    let digits = line
+        .chars()
+        .rev()
+        .skip_while(|ch| ch.is_whitespace())
+        .take_while(|ch| ch.is_ascii_digit())
+        .count();
+    digits > 0
+}
+
+fn has_toc_leader(line: &str) -> bool {
+    let leader_chars = ['.', '…', '·', '_', '—', '-', '─', '�', '\u{0008}'];
+    let leader_count = line.chars().filter(|ch| leader_chars.contains(ch)).count();
+    leader_count >= 4
+}
+
 /// 一个流式 DOCX 段落构建器。
 /// 可以把它理解成“按 XML 事件逐步积累当前段状态”的小状态机。
 struct ParagraphBuilder {
@@ -455,7 +635,9 @@ impl ParagraphBuilder {
 
     /// 根据段落样式判断是否应视为标题。
     fn capture_style(&mut self, event: &BytesStart<'_>) -> AppResult<()> {
-        let style = attr_value(event, b"val")?.unwrap_or_default().to_ascii_lowercase();
+        let style = attr_value(event, b"val")?
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         if style.starts_with("heading") {
             self.block_type = BlockType::Heading;
         }
