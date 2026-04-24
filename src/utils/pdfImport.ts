@@ -45,6 +45,8 @@ const MAX_SUSPICIOUS_RATIO = 0.6;
 const LINE_MERGE_Y_THRESHOLD = 3;
 const PARAGRAPH_GAP_FACTOR = 1.65;
 const MIN_SEPARATOR_RUN = 5;
+const DUPLICATE_ITEM_POSITION_EPSILON = 0.5;
+const DUPLICATE_ITEM_SIZE_EPSILON = 0.5;
 
 let pdfjsPromise: Promise<PdfJsLib> | null = null;
 
@@ -71,11 +73,13 @@ export async function extractPdfNormalizedDocument(
     logger?.("开始提取页面文本", { pageNumber });
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
-    const items = content.items.filter(isTextItem).map(normalizeTextItem);
+    const rawItems = content.items.filter(isTextItem).map(normalizeTextItem);
+    const items = dedupeOverlappingTextItems(rawItems);
     const totalChars = items.reduce((sum, item) => sum + item.str.length, 0);
     logger?.("页面文本提取完成", {
       pageNumber,
       itemCount: items.length,
+      dedupedItemCount: rawItems.length - items.length,
       totalChars,
     });
 
@@ -170,6 +174,43 @@ function normalizeTextItem(item: TextItem): TextItem {
     width: item.width ?? 0,
     height: item.height ?? 0,
   };
+}
+
+function dedupeOverlappingTextItems(items: TextItem[]) {
+  const deduped: TextItem[] = [];
+
+  for (const item of items) {
+    const isDuplicate = deduped.some((current) =>
+      isSameTextItem(current, item),
+    );
+    if (!isDuplicate) {
+      deduped.push(item);
+    }
+  }
+
+  return deduped;
+}
+
+function isSameTextItem(left: TextItem, right: TextItem) {
+  return (
+    left.str === right.str &&
+    nearlyEqual(
+      left.transform[4],
+      right.transform[4],
+      DUPLICATE_ITEM_POSITION_EPSILON,
+    ) &&
+    nearlyEqual(
+      left.transform[5],
+      right.transform[5],
+      DUPLICATE_ITEM_POSITION_EPSILON,
+    ) &&
+    nearlyEqual(left.width, right.width, DUPLICATE_ITEM_SIZE_EPSILON) &&
+    nearlyEqual(left.height, right.height, DUPLICATE_ITEM_SIZE_EPSILON)
+  );
+}
+
+function nearlyEqual(left: number, right: number, epsilon: number) {
+  return Math.abs(left - right) <= epsilon;
 }
 
 function buildLines(items: TextItem[]) {
