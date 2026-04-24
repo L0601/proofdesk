@@ -31,6 +31,10 @@ type PdfParagraph = {
   startItemIndex: number;
   endItemIndex: number;
   segments: ParagraphSegment[];
+  topY: number;
+  bottomY: number;
+  avgHeight: number;
+  lineCount: number;
 };
 
 type ImportLogger = (message: string, payload?: unknown) => void;
@@ -47,6 +51,9 @@ const PARAGRAPH_GAP_FACTOR = 1.65;
 const MIN_SEPARATOR_RUN = 5;
 const DUPLICATE_ITEM_POSITION_EPSILON = 0.5;
 const DUPLICATE_ITEM_SIZE_EPSILON = 0.5;
+const HEADER_ZONE_RATIO = 0.12;
+const FOOTER_ZONE_RATIO = 0.1;
+const MIN_ISOLATED_GAP = 24;
 
 let pdfjsPromise: Promise<PdfJsLib> | null = null;
 
@@ -72,6 +79,7 @@ export async function extractPdfNormalizedDocument(
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     logger?.("开始提取页面文本", { pageNumber });
     const page = await document.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
     const rawItems = content.items.filter(isTextItem).map(normalizeTextItem);
     const items = dedupeOverlappingTextItems(rawItems);
@@ -91,7 +99,10 @@ export async function extractPdfNormalizedDocument(
     }
 
     const lines = buildLines(items);
-    const pageParagraphs = buildParagraphs(lines);
+    const pageParagraphs = filterRunningHeaderFooters(
+      buildParagraphs(lines),
+      viewport.height,
+    );
 
     for (const paragraph of pageParagraphs) {
       const text = sanitizePdfParagraphText(paragraph.text);
@@ -106,6 +117,10 @@ export async function extractPdfNormalizedDocument(
         text,
         startItemIndex: paragraph.startItemIndex,
         endItemIndex: paragraph.endItemIndex,
+        topY: paragraph.topY,
+        bottomY: paragraph.bottomY,
+        avgHeight: paragraph.avgHeight,
+        lineCount: paragraph.lineCount,
         segments: [
           {
             page: pageNumber,
@@ -288,6 +303,10 @@ function buildParagraphs(lines: Line[]) {
     text: string;
     startItemIndex: number;
     endItemIndex: number;
+    topY: number;
+    bottomY: number;
+    avgHeight: number;
+    lineCount: number;
   }> = [];
   let itemCursor = 0;
   let current:
@@ -295,6 +314,10 @@ function buildParagraphs(lines: Line[]) {
         textParts: string[];
         startItemIndex: number;
         endItemIndex: number;
+        topY: number;
+        bottomY: number;
+        totalHeight: number;
+        lineCount: number;
         previousY: number;
         previousHeight: number;
       }
@@ -310,6 +333,10 @@ function buildParagraphs(lines: Line[]) {
         textParts: [line.text],
         startItemIndex,
         endItemIndex,
+        topY: line.y,
+        bottomY: line.y - line.avgHeight,
+        totalHeight: line.avgHeight,
+        lineCount: 1,
         previousY: line.y,
         previousHeight: line.avgHeight,
       };
@@ -331,11 +358,19 @@ function buildParagraphs(lines: Line[]) {
         text: current.textParts.join("\n"),
         startItemIndex: current.startItemIndex,
         endItemIndex: current.endItemIndex,
+        topY: current.topY,
+        bottomY: current.bottomY,
+        avgHeight: current.totalHeight / current.lineCount,
+        lineCount: current.lineCount,
       });
       current = {
         textParts: [line.text],
         startItemIndex,
         endItemIndex,
+        topY: line.y,
+        bottomY: line.y - line.avgHeight,
+        totalHeight: line.avgHeight,
+        lineCount: 1,
         previousY: line.y,
         previousHeight: line.avgHeight,
       };
@@ -344,6 +379,9 @@ function buildParagraphs(lines: Line[]) {
 
     current.textParts.push(line.text);
     current.endItemIndex = endItemIndex;
+    current.bottomY = line.y - line.avgHeight;
+    current.totalHeight += line.avgHeight;
+    current.lineCount += 1;
     current.previousY = line.y;
     current.previousHeight = line.avgHeight;
   }
@@ -353,10 +391,90 @@ function buildParagraphs(lines: Line[]) {
       text: current.textParts.join("\n"),
       startItemIndex: current.startItemIndex,
       endItemIndex: current.endItemIndex,
+      topY: current.topY,
+      bottomY: current.bottomY,
+      avgHeight: current.totalHeight / current.lineCount,
+      lineCount: current.lineCount,
     });
   }
 
   return paragraphs;
+}
+
+function filterRunningHeaderFooters(
+  paragraphs: PdfParagraph[],
+  pageHeight: number,
+) {
+  const bodyGaps = collectParagraphGaps(paragraphs);
+  const typicalGap = bodyGaps.length > 0 ? median(bodyGaps) : 0;
+
+  return paragraphs.filter((paragraph, index) => {
+    const previous = index > 0 ? paragraphs[index - 1] : null;
+    const next = index < paragraphs.length - 1 ? paragraphs[index + 1] : null;
+    return !isRunningHeaderFooter(
+      paragraph,
+      previous,
+      next,
+      pageHeight,
+      typicalGap,
+    );
+  });
+}
+
+function collectParagraphGaps(paragraphs: PdfParagraph[]) {
+  const gaps: number[] = [];
+
+  for (let index = 0; index < paragraphs.length - 1; index += 1) {
+    const current = paragraphs[index];
+    const next = paragraphs[index + 1];
+    const gap = current.bottomY - next.topY;
+    if (gap > 0) {
+      gaps.push(gap);
+    }
+  }
+
+  return gaps;
+}
+
+function isRunningHeaderFooter(
+  paragraph: PdfParagraph,
+  previous: PdfParagraph | null,
+  next: PdfParagraph | null,
+  pageHeight: number,
+  typicalGap: number,
+) {
+  const topDistance = pageHeight - paragraph.topY;
+  const bottomDistance = paragraph.bottomY;
+  const gapAbove = previous ? previous.bottomY - paragraph.topY : 0;
+  const gapBelow = next ? paragraph.bottomY - next.topY : 0;
+  const isolatedGap = Math.max(gapAbove, gapBelow);
+  const gapThreshold = Math.max(typicalGap * 2.2, MIN_ISOLATED_GAP);
+  const nearTop = topDistance <= pageHeight * HEADER_ZONE_RATIO;
+  const nearBottom = bottomDistance <= pageHeight * FOOTER_ZONE_RATIO;
+  const shortText = paragraph.text.replace(/\s+/g, "").length <= 28;
+  const compactLines = paragraph.lineCount <= 2;
+  const structured = isLikelyHeaderFooter(paragraph.text);
+
+  if ((nearTop || nearBottom) && structured) {
+    return true;
+  }
+
+  return (
+    (nearTop || nearBottom) &&
+    shortText &&
+    compactLines &&
+    isolatedGap >= gapThreshold &&
+    !hasStrongTerminalPunctuation(paragraph.text)
+  );
+}
+
+function median(values: number[]) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+  return sorted[middle] ?? 0;
 }
 
 function sanitizePdfParagraphText(text: string) {
@@ -535,7 +653,8 @@ function isLikelyHeaderFooter(text: string) {
   }
   return (
     /^第?\s*[0-9一二三四五六七八九十]+\s*页$/.test(value) ||
-    /^[0-9]+$/.test(value)
+    /^[0-9]+$/.test(value) ||
+    /^[0-9]{1,4}\s*[丨|｜]\s*\S.+$/.test(value)
   );
 }
 
