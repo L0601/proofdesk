@@ -10,6 +10,8 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use serde::Deserialize;
+
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::repository::{
@@ -17,7 +19,20 @@ use crate::repository::{
     proofreading_repository::ProofreadingRepository,
 };
 use crate::services::proofread_service::debug_call_text;
-use crate::types::IssueType;
+use crate::types::{DocumentBlock, IssueType, ProofreadingStatus};
+
+#[derive(Debug, Deserialize)]
+struct ProbeResponsePayload {
+    issues: Vec<ProbeIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeIssue {
+    #[serde(rename = "type")]
+    issue_type: String,
+    quote: String,
+    suggestion: String,
+}
 
 /// 解析 probe 子命令并执行。
 pub async fn run_probe(args: &[String]) -> AppResult<()> {
@@ -59,6 +74,11 @@ pub async fn run_probe(args: &[String]) -> AppResult<()> {
             block_id,
             block_index,
         } => call_block(db_path, &project_id, block_id.as_deref(), block_index).await,
+        ProbeCommand::SamplePending {
+            db_path,
+            project_id,
+            count,
+        } => sample_pending_blocks(db_path, &project_id, count).await,
     }
 }
 
@@ -113,6 +133,136 @@ async fn call_block(
     println!("\n=== request ===\n{}\n", result.request_json);
     println!("=== response ===\n{}\n", result.response_json);
     Ok(())
+}
+
+/// 从 pending block 中随机抽样，逐个调用模型，并只输出有问题的结果。
+async fn sample_pending_blocks(db_path: PathBuf, project_id: &str, count: usize) -> AppResult<()> {
+    let db = Database::from_path(db_path)?;
+    let settings = AppSettingsRepository::new(db.clone()).get()?;
+    let repo = ProofreadingRepository::new(db);
+    let blocks = repo.list_blocks(project_id)?;
+    let pending_blocks = collect_pending_blocks(&blocks);
+    let sample_size = count.min(pending_blocks.len());
+
+    println!("project_id: {}", project_id);
+    println!("pending_blocks: {}", pending_blocks.len());
+    println!("sample_count: {}", sample_size);
+    println!("model: {}", settings.model);
+    println!("base_url: {}", settings.base_url);
+
+    if sample_size == 0 {
+        println!("没有可抽样的 pending block");
+        return Ok(());
+    }
+
+    let sampled_blocks = sample_blocks(pending_blocks, sample_size);
+    let mut issue_blocks = 0usize;
+
+    for block in sampled_blocks {
+        println!(
+            "\n=== sampling {} #{} page={} ===",
+            block.id,
+            block.block_index,
+            block.source_page.unwrap_or(0)
+        );
+        let timer = Instant::now();
+        let result = debug_call_text(
+            &settings,
+            &block.id,
+            &block.text_content,
+            &[
+                IssueType::Typo,
+                IssueType::Punctuation,
+                IssueType::Grammar,
+                IssueType::Wording,
+                IssueType::Redundancy,
+                IssueType::Consistency,
+            ],
+        )
+        .await?;
+        let payload: ProbeResponsePayload = serde_json::from_str(&result.response_json)
+            .map_err(|error| AppError::new("invalid_probe_response", error.to_string()))?;
+
+        if payload.issues.is_empty() {
+            continue;
+        }
+
+        issue_blocks += 1;
+        println!(
+            "result: issue_count={} elapsed_ms={} prompt_tokens={} completion_tokens={}",
+            payload.issues.len(),
+            timer.elapsed().as_millis(),
+            result.prompt_tokens,
+            result.completion_tokens
+        );
+        for (index, issue) in payload.issues.iter().enumerate() {
+            println!(
+                "{}. type={} quote={} suggestion={}",
+                index + 1,
+                issue.issue_type,
+                compact_field(&issue.quote),
+                compact_field(&issue.suggestion)
+            );
+        }
+    }
+
+    println!(
+        "\nsummary: sampled={} issue_blocks={} clean_blocks={}",
+        sample_size,
+        issue_blocks,
+        sample_size.saturating_sub(issue_blocks)
+    );
+    Ok(())
+}
+
+fn collect_pending_blocks(blocks: &[DocumentBlock]) -> Vec<DocumentBlock> {
+    blocks
+        .iter()
+        .filter(|block| matches!(block.proofreading_status, ProofreadingStatus::Pending))
+        .cloned()
+        .collect()
+}
+
+fn sample_blocks(mut blocks: Vec<DocumentBlock>, count: usize) -> Vec<DocumentBlock> {
+    if blocks.len() <= count {
+        return blocks;
+    }
+
+    let mut state = seed_from_time();
+    for index in (1..blocks.len()).rev() {
+        let swap_index = next_random_index(&mut state, index + 1);
+        blocks.swap(index, swap_index);
+    }
+    blocks.truncate(count);
+    blocks
+}
+
+fn seed_from_time() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0x9E37_79B9_7F4A_7C15);
+    nanos ^ 0xA076_1D64_78BD_642F
+}
+
+fn next_random_index(state: &mut u64, upper_bound: usize) -> usize {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    (*state as usize) % upper_bound
+}
+
+fn compact_field(value: &str) -> String {
+    let single_line = value.replace('\n', " ");
+    let compact = single_line.trim();
+    if compact.chars().count() > 40 {
+        let prefix = compact.chars().take(40).collect::<String>();
+        format!("{prefix}...")
+    } else {
+        compact.to_string()
+    }
 }
 
 /// 允许通过 block_id 或 block_index 选中一个段落。
@@ -180,6 +330,11 @@ enum ProbeCommand {
         block_id: Option<String>,
         block_index: Option<i64>,
     },
+    SamplePending {
+        db_path: PathBuf,
+        project_id: String,
+        count: usize,
+    },
 }
 
 /// 解析命令行参数。
@@ -222,6 +377,26 @@ fn parse_command(args: &[String]) -> AppResult<ProbeCommand> {
                 block_index,
             })
         }
+        "sample-pending" => {
+            let project_id = read_option(args, "--project")
+                .ok_or_else(|| AppError::new("missing_project_id", "请提供 --project"))?;
+            let count = read_option(args, "--count")
+                .map(|value| {
+                    value.parse::<usize>()
+                        .map_err(|_| AppError::new("invalid_count", "--count 必须是正整数"))
+                })
+                .transpose()?
+                .unwrap_or(10);
+            if count == 0 {
+                return Err(AppError::new("invalid_count", "--count 必须大于 0"));
+            }
+
+            Ok(ProbeCommand::SamplePending {
+                db_path,
+                project_id,
+                count,
+            })
+        }
         _ => Err(usage_error()),
     }
 }
@@ -238,9 +413,10 @@ fn usage_error() -> AppError {
     AppError::new(
         "invalid_args",
         "用法:
-  cargo run --bin proofread_probe -- print-db-path
-  cargo run --bin proofread_probe -- list-projects [--db /path/to/proofdesk.sqlite3]
-  cargo run --bin proofread_probe -- list-blocks --project <project_id> [--db /path/to/proofdesk.sqlite3]
-  cargo run --bin proofread_probe -- call-block --project <project_id> (--block <block_id> | --index <block_index>) [--db /path/to/proofdesk.sqlite3]",
+  cargo run --manifest-path src-tauri/Cargo.toml --bin proofread_probe -- print-db-path
+  cargo run --manifest-path src-tauri/Cargo.toml --bin proofread_probe -- list-projects [--db /path/to/proofdesk.sqlite3]
+  cargo run --manifest-path src-tauri/Cargo.toml --bin proofread_probe -- list-blocks --project <project_id> [--db /path/to/proofdesk.sqlite3]
+  cargo run --manifest-path src-tauri/Cargo.toml --bin proofread_probe -- call-block --project <project_id> (--block <block_id> | --index <block_index>) [--db /path/to/proofdesk.sqlite3]
+  cargo run --manifest-path src-tauri/Cargo.toml --bin proofread_probe -- sample-pending --project <project_id> [--count <n>] [--db /path/to/proofdesk.sqlite3]",
     )
 }
